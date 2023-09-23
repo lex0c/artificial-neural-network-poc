@@ -37,3 +37,23 @@ def layer(values, weights, biases, act_fn, verbose=False):
     return output
 
 
+class FeedForward:
+    def __init__(self, layers=[], verbose=False):
+        self.layers = layers
+        self.verbose = verbose
+
+    def add_layer(self, weights, biases, act_fn):
+        self.layers.append({"weights": weights, "biases": biases, "act_fn": act_fn})
+
+    def forward(self, input_values):
+        values = input_values
+
+        for i, layer_param in enumerate(self.layers):
+            if self.verbose:
+                print(f'Processing Layer {i+1}')
+
+            values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"], self.verbose)
+
+        return values
+
+
