@@ -1,3 +1,7 @@
+import math
+import random
+
+
 def neuron(values, weights, bias, act_fn):
     if len(values) != len(weights):
         raise ValueError("Sizes of values and weights must be the same!")
@@ -42,8 +46,15 @@ class FeedForward:
         self.layers = layers
         self.verbose = verbose
 
-    def add_layer(self, weights, biases, act_fn):
-        self.layers.append({"weights": weights, "biases": biases, "act_fn": act_fn})
+    def add_layer(self, num_inputs, num_neurons, act_fn):
+        limit = 1 / math.sqrt(num_inputs)
+
+        self.layers.append({
+            # The code below generates a list of lists, where each internal list represents the weights for a neuron in the neural network layer.
+            "weights": [[random.uniform(-limit, limit) for _ in range(num_inputs)] for _ in range(num_neurons)],
+            "biases": [0.0 for _ in range(num_neurons)],
+            "act_fn": act_fn
+        })
 
     def forward(self, input_values):
         values = input_values
