@@ -36,6 +36,16 @@ def normalize_minmax(data):
     return [(x - min_val) / (max_val - min_val) for x in data]
 
 
+def one_hot_encode(unique_elements, element):
+    if element not in unique_elements:
+        raise ValueError(f"{element} not found in {unique_elements}")
+
+    encoding = [0] * len(unique_elements)
+    encoding[unique_elements.index(element)] = 1
+
+    return encoding
+
+
 def save_model(model_name, data):
     path = 'models/' + model_name + '.json'
     with open(path, 'w') as file:

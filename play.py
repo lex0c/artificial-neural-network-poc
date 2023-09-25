@@ -1,10 +1,15 @@
 from feedforward import neuron, layer, FeedForward
-from etc import save_model, load_model, normalize_minmax
+from etc import save_model, load_model, normalize_minmax, one_hot_encode
 
 
 verbose = True
 
+classes = ['A', 'B', 'C']
+print(classes, one_hot_encode(classes, 'B'))
+
 input_values = [2, -3]
+print(input_values, normalize_minmax(input_values))
+
 
 neuron_weights = [0.5, -0.5]
 neuron_bias = 1
