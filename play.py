@@ -1,5 +1,5 @@
 from feedforward import neuron, layer, FeedForward
-from etc import relu, sigmoid
+from etc import save_model, load_model, normalize_minmax
 
 
 verbose = True
@@ -16,14 +16,16 @@ layer_biases = [1.0, 2.0, -0.1]
 #print(layer(input_values, layer_weights, layer_biases, relu, verbose))
 
 
-network = FeedForward(verbose=True)
-network.add_layer(num_inputs=len(input_values), num_neurons=4, act_fn=relu)
-network.add_layer(num_inputs=4, num_neurons=4, act_fn=relu)
-network.add_layer(num_inputs=4, num_neurons=1, act_fn=sigmoid)
+network = FeedForward(layers=load_model('play'), verbose=True)
+#network.add_layer(num_inputs=len(input_values), num_neurons=4, act_fn="relu")
+#network.add_layer(num_inputs=4, num_neurons=4, act_fn="relu")
+#network.add_layer(num_inputs=4, num_neurons=1, act_fn="sigmoid")
 
 print(network.layers)
 
-output = network.forward(input_values)
+#save_model('play', network.layers)
+
+output = network.forward(normalize_minmax(input_values))
 
 print("FeedForward Output: ", output)
 

@@ -1,12 +1,15 @@
 import math
 import random
 
+from etc import relu, sigmoid, softmax, linear
+
 
 def neuron(values, weights, bias, act_fn):
     if len(values) != len(weights):
         raise ValueError("Sizes of values and weights must be the same!")
 
     linear_combination = 0
+    output = 0
 
     # Linear combination of values and weights
     for value, weight in zip(values, weights):
@@ -16,7 +19,14 @@ def neuron(values, weights, bias, act_fn):
     linear_combination += bias
 
     # Pass the linear combination through the activation function
-    output = act_fn(linear_combination)
+    if act_fn == "relu":
+        output = relu(linear_combination)
+    elif act_fn == "sigmoid":
+        output = sigmoid(linear_combination)
+    elif act_fn == "softmax":
+        output = softmax(linear_combination)
+    elif act_fn == "linear":
+        output = linear(linear_combination)
 
     return output
 

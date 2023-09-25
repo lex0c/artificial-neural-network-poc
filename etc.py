@@ -1,4 +1,5 @@
 import math
+import json
 
 
 # It is an activation function that resets all negative values and keeps all positive values as they are. 
@@ -26,5 +27,24 @@ def softmax(x):
 # It is useful when you want the output of the neural network to be a continuous value (regression).
 def linear(x):
     return x
+
+# Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
+# specific range, usually [0, 1] or [-1, 1].
+def normalize_minmax(data):
+    min_val = min(data)
+    max_val = max(data)
+    return [(x - min_val) / (max_val - min_val) for x in data]
+
+
+def save_model(model_name, data):
+    path = 'models/' + model_name + '.json'
+    with open(path, 'w') as file:
+        json.dump(data, file, indent=2)
+
+
+def load_model(model_name):
+    path = 'models/' + model_name + '.json'
+    with open(path, 'r') as file:
+        return json.load(file)
 
 
