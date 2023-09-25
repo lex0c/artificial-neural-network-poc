@@ -3,6 +3,7 @@ from etc import save_model, load_model, normalize_minmax, one_hot_encode
 
 
 verbose = True
+epsilon = 0.1
 
 classes = ['A', 'B', 'C']
 print(classes, one_hot_encode(classes, 'B'))

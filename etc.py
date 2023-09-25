@@ -1,5 +1,6 @@
 import math
 import json
+import random
 
 
 # It is an activation function that resets all negative values and keeps all positive values as they are. 
@@ -36,6 +37,10 @@ def normalize_minmax(data):
     return [(x - min_val) / (max_val - min_val) for x in data]
 
 
+# This function is responsible for converting an element into a "one-hot encode" representation. 
+# In "one-hot encoding", each single element is represented by a vector where one of the elements is 
+# 1 and the rest are 0. For example, for three classes A, B, and C, A would be [1,0,0] , B would be [0,1,0], 
+# and C would be [0,0,1].
 def one_hot_encode(unique_elements, element):
     if element not in unique_elements:
         raise ValueError(f"{element} not found in {unique_elements}")
@@ -44,6 +49,16 @@ def one_hot_encode(unique_elements, element):
     encoding[unique_elements.index(element)] = 1
 
     return encoding
+
+
+# This function represents an epsilon-greedy strategy applied to softmax probabilities. 
+# It takes as input a list of softmax probabilities, softmax_probs, and an epsilon value that controls 
+# the ratio between exploration and exploitation.
+def epsilon_greedy_softmax(softmax_probs, epsilon=0.1):
+    if random.uniform(0, 1) < epsilon:  # Explore: Choose a random action.
+        return random.randint(0, len(softmax_probs) - 1)
+    else:  # Exploit: Choose action based on softmax probabilities.
+        return max(range(len(softmax_probs)), key=lambda i: softmax_probs[i])
 
 
 def save_model(model_name, data):
