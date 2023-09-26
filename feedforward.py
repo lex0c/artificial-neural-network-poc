@@ -1,5 +1,6 @@
 import math
 import random
+#import numpy as np
 
 from etc import relu, sigmoid, softmax, linear
 
@@ -76,5 +77,45 @@ class FeedForward:
             values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"], self.verbose)
 
         return values
+
+    def select_action(self, state, epsilon=0.1, threshold=0.5):
+        if random.uniform(0, 1) < epsilon:
+            return random.choice([0, 1])
+
+        layer_output = self.forward(state)
+
+        if layer_output:
+            return 1 if layer_output[0] >= threshold else 0
+
+        return random.choice([0, 1])
+
+    def learn(self, state, action, reward, next_state, done, learning_rate=0.1, discount_factor=0.99):
+        # Predict Q-values for current state
+        q_values = self.forward(state)
+
+        # Copy Q-values as Target Q-values
+        target_q_values = list(q_values)
+
+        if done:
+            target_q_values[0] = reward # Assume the reward is correctly calculated externally
+        else:
+            # Predict Q-values for the next state
+            next_q_values = self.forward(next_state)
+
+            # Update the target Q-value for the action taken
+            target_q_values[0] = reward + discount_factor * max(next_q_values)
+
+        # Compute the error
+        error = [t - q for t, q in zip(target_q_values, q_values)]
+
+        # Update weights and biases
+        for i in reversed(range(len(self.layers))):
+            layer = self.layers[i]
+
+            for neuron_idx, weights in enumerate(layer["weights"]):
+                for weight_idx, weight in enumerate(weights):
+                    weights[weight_idx] += learning_rate * error[0] * state[weight_idx]
+
+                layer["biases"][neuron_idx] += learning_rate * error[0]
 
 
