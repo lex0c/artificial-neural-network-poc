@@ -3,7 +3,6 @@ from etc import save_model, load_model, normalize_minmax, one_hot_encode
 
 
 verbose = True
-epsilon = 0.1
 
 classes = ['A', 'B', 'C']
 print(classes, one_hot_encode(classes, 'B'))
@@ -22,10 +21,9 @@ layer_biases = [1.0, 2.0, -0.1]
 #print(layer(input_values, layer_weights, layer_biases, relu, verbose))
 
 
-network = FeedForward(layers=load_model('play'), verbose=True)
-#network.add_layer(num_inputs=len(input_values), num_neurons=4, act_fn="relu")
-#network.add_layer(num_inputs=4, num_neurons=4, act_fn="relu")
-#network.add_layer(num_inputs=4, num_neurons=1, act_fn="sigmoid")
+network = FeedForward(layers=[], verbose=True)
+network.add_layer(num_inputs=len(input_values), num_neurons=5, act_fn="relu")
+network.add_layer(num_inputs=5, num_neurons=1, act_fn="sigmoid")
 
 print(network.layers)
 

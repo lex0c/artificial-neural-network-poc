@@ -1,18 +1,20 @@
 import math
 import json
 import random
+import numpy as np
 
 
 # It is an activation function that resets all negative values and keeps all positive values as they are. 
 # It is especially useful in deep neural networks as it helps mitigate the gradient vanishing problem.
 def relu(x):
-    return max(0, x)
+    #return max(0, x)
+    return np.maximum(0, x)
 
 
 # It is an activation function that compresses the output between 0 and 1. It is useful in output layers of 
 # binary classification problems.
 def sigmoid(x):
-    return 1 / (1 + math.exp(-x))
+    return 1 / (1 + np.exp(-x))
 
 
 # The Softmax function converts a vector of numbers into a vector of probabilities, 
@@ -28,6 +30,22 @@ def softmax(x):
 # It is useful when you want the output of the neural network to be a continuous value (regression).
 def linear(x):
     return x
+
+
+def derivative_of_activation_fn(x, act_fn):
+    if act_fn == "relu":
+        return np.where(x > 0, 1, 0)
+    elif act_fn == "sigmoid":
+        sigmoid_x = sigmoid(x)
+        return sigmoid_x * (1 - sigmoid_x)
+    elif act_fn == "linear":
+        return 1
+    elif act_fn == "softmax":
+        softmax_x = softmax(x)
+        return softmax_x * (1 - softmax_x)
+    else:
+        raise ValueError(f"Unknown activation function: {act_fn}")
+
 
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
 # specific range, usually [0, 1] or [-1, 1].
