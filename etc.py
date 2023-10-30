@@ -7,14 +7,24 @@ import numpy as np
 # It is an activation function that resets all negative values and keeps all positive values as they are. 
 # It is especially useful in deep neural networks as it helps mitigate the gradient vanishing problem.
 def relu(x):
-    #return max(0, x)
     return np.maximum(0, x)
+
+
+# Returns the derivative of the ReLU function evaluated at x.
+def relu_derivative(x):
+    return np.where(x > 0, 1, 0)
 
 
 # It is an activation function that compresses the output between 0 and 1. It is useful in output layers of 
 # binary classification problems.
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
+
+
+# Returns the derivative of the sigmoid function evaluated at x.
+def sigmoid_derivative(x):
+    sigmoid_x = sigmoid(x)
+    return sigmoid_x * (1 - sigmoid_x)
 
 
 # The Softmax function converts a vector of numbers into a vector of probabilities, 
@@ -32,19 +42,19 @@ def linear(x):
     return x
 
 
-def derivative_of_activation_fn(x, act_fn):
+# Returns the derivative of the linear function, which is 1.
+def linear_derivative(x):
+    return 1
+
+
+# Add other activation functions as needed
+def activation_derivative(act_fn, z):
     if act_fn == "relu":
-        return np.where(x > 0, 1, 0)
+        return relu_derivative(z)
     elif act_fn == "sigmoid":
-        sigmoid_x = sigmoid(x)
-        return sigmoid_x * (1 - sigmoid_x)
+        return sigmoid_derivative(z)
     elif act_fn == "linear":
-        return 1
-    elif act_fn == "softmax":
-        softmax_x = softmax(x)
-        return softmax_x * (1 - softmax_x)
-    else:
-        raise ValueError(f"Unknown activation function: {act_fn}")
+        return linear_derivative(z)
 
 
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
@@ -77,6 +87,14 @@ def epsilon_greedy_softmax(softmax_probs, epsilon=0.1):
         return random.randint(0, len(softmax_probs) - 1)
     else:  # Exploit: Choose action based on softmax probabilities.
         return max(range(len(softmax_probs)), key=lambda i: softmax_probs[i])
+
+
+def mse_loss(y_true, y_pred):
+    return np.mean((y_true - y_pred)**2)
+
+
+def mse_loss_derivative(y_true, y_pred):
+        return 2 * (y_pred - y_true) / len(y_true)
 
 
 def save_model(model_name, data):

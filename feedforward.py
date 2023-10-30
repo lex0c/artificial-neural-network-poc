@@ -1,8 +1,8 @@
 import math
 import random
-#import numpy as np
+import numpy as np
 
-from etc import relu, sigmoid, softmax, linear
+from etc import relu, sigmoid, softmax, linear, activation_derivative, mse_loss, mse_loss_derivative
 
 
 def neuron(values, weights, bias, act_fn):
@@ -64,7 +64,8 @@ class FeedForward:
             # The code below generates a list of lists, where each internal list represents the weights for a neuron in the neural network layer.
             "weights": [[random.uniform(-limit, limit) for _ in range(num_inputs)] for _ in range(num_neurons)],
             "biases": [random.uniform(-limit, limit) for _ in range(num_neurons)],
-            "act_fn": act_fn
+            "act_fn": act_fn,
+            "output": []
         })
 
     def forward(self, input_values):
@@ -76,5 +77,54 @@ class FeedForward:
 
             values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"], self.verbose)
 
+            layer_param['output'] = values
+
         return values
+
+
+class FeedForwardAutoencoder(FeedForward):
+    def __init__(self, layers=[], learning_rate=0.01, verbose=False):
+        super().__init__(layers, verbose)
+        self.learning_rate = learning_rate
+
+    def backpropagation(self, X, loss_gradient):
+        gradient = loss_gradient
+
+        for i in reversed(range(len(self.layers))):
+            layer_param = self.layers[i]
+
+            # A entrada para a camada atual é a saída da camada anterior
+            if i != 0:
+                X = self.layers[i-1]['output']
+
+            # Calculando o gradiente da função de ativação
+            act_derivative = activation_derivative(layer_param['act_fn'], layer_param['output'])
+            gradient *= act_derivative
+
+            # Calculando o gradiente dos pesos e bias
+            weights_gradient = np.outer(gradient, X)
+            biases_gradient = gradient
+
+            # Atualizando os pesos e bias
+            layer_param['weights'] -= self.learning_rate * weights_gradient.T
+            layer_param['biases'] -= self.learning_rate * biases_gradient
+
+            # Atualizando o gradiente para a próxima iteração
+            gradient = np.dot(layer_param['weights'], gradient)
+
+    def train(self, X):
+        # Forward pass
+        reconstructed_X = self.forward(X)
+
+        # Calculate loss
+        loss = mse_loss(X, reconstructed_X)
+
+        # Calculate loss gradient
+        loss_gradient = mse_loss_derivative(X, reconstructed_X)
+
+        # Backward pass
+        self.backpropagation(X, loss_gradient)
+
+        return loss
+
 
