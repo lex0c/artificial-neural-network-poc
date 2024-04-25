@@ -1,36 +1,26 @@
-from feedforward import neuron, layer, FeedForward
-from etc import save_model, load_model, normalize_minmax, one_hot_encode
+import joblib
+
+from feedforward import FeedForward
+from etc import load_model, preprocess_text
 
 
-verbose = True
-
-classes = ['A', 'B', 'C']
-print(classes, one_hot_encode(classes, 'B'))
-
-input_values = [2, -3]
-print(input_values, normalize_minmax(input_values))
+network = FeedForward(layers=load_model('simple_spam_classifier'), verbose=True)
 
 
-neuron_weights = [0.5, -0.5]
-neuron_bias = 1
-layer_weights = [[0.5, -0.5], [0.7, 0.1], [0.1, -0.1]]
-layer_biases = [1.0, 2.0, -0.1]
+new_emails = [
+    #"Win a brand new car. Click now!",
+    #"Your free trial expires today, now!",
+    "Your free trial expires today, click now!",
+    #"Please submit the report by tomorrow."
+]
+
+vectorizer = joblib.load('model_vectorizer.joblib')
+
+processed_new_emails = [preprocess_text(email) for email in new_emails]
+X_new = vectorizer.transform(processed_new_emails)
 
 
-#print(neuron(input_values, neuron_weights, neuron_bias, relu))
-#print(layer(input_values, layer_weights, layer_biases, relu, verbose))
-
-
-network = FeedForward(layers=[], verbose=True)
-network.add_layer(num_inputs=len(input_values), num_neurons=5, act_fn="relu")
-network.add_layer(num_inputs=5, num_neurons=1, act_fn="sigmoid")
-
-print(network.layers)
-
-#save_model('play', network.layers)
-
-output = network.forward(normalize_minmax(input_values))
-
-print("FeedForward Output: ", output)
-
+# Using the forward method of the network to predict
+predictions = network.forward(X_new.toarray()[0])
+print(predictions)
 

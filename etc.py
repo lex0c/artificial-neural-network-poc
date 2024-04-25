@@ -2,19 +2,39 @@ import math
 import json
 import random
 import numpy as np
+import nltk
+import string
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+
+
+nltk.download('punkt')
+nltk.download('stopwords')
 
 
 # It is an activation function that resets all negative values and keeps all positive values as they are. 
 # It is especially useful in deep neural networks as it helps mitigate the gradient vanishing problem.
 def relu(x):
-    #return max(0, x)
     return np.maximum(0, x)
+
+
+# Returns the derivative of the ReLU function evaluated at x.
+def relu_derivative(x):
+    return np.where(x > 0, 1, 0)
 
 
 # It is an activation function that compresses the output between 0 and 1. It is useful in output layers of 
 # binary classification problems.
 def sigmoid(x):
+    x = np.array(x)
     return 1 / (1 + np.exp(-x))
+
+
+# Returns the derivative of the sigmoid function evaluated at x.
+def sigmoid_derivative(x):
+    sigmoid_x = sigmoid(x)
+    return sigmoid_x * (1 - sigmoid_x)
 
 
 # The Softmax function converts a vector of numbers into a vector of probabilities, 
@@ -32,19 +52,19 @@ def linear(x):
     return x
 
 
-def derivative_of_activation_fn(x, act_fn):
+# Returns the derivative of the linear function, which is 1.
+def linear_derivative(x):
+    return 1
+
+
+# Add other activation functions as needed
+def activation_derivative(act_fn, z):
     if act_fn == "relu":
-        return np.where(x > 0, 1, 0)
+        return relu_derivative(z)
     elif act_fn == "sigmoid":
-        sigmoid_x = sigmoid(x)
-        return sigmoid_x * (1 - sigmoid_x)
+        return sigmoid_derivative(z)
     elif act_fn == "linear":
-        return 1
-    elif act_fn == "softmax":
-        softmax_x = softmax(x)
-        return softmax_x * (1 - softmax_x)
-    else:
-        raise ValueError(f"Unknown activation function: {act_fn}")
+        return linear_derivative(z)
 
 
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
@@ -77,6 +97,45 @@ def epsilon_greedy_softmax(softmax_probs, epsilon=0.1):
         return random.randint(0, len(softmax_probs) - 1)
     else:  # Exploit: Choose action based on softmax probabilities.
         return max(range(len(softmax_probs)), key=lambda i: softmax_probs[i])
+
+
+# The MSE measures the average of the squares of the differences between the predicted values and the actual values. 
+# It provides a simple and effective means of assessing the performance of a model.
+def mse_loss(y_true, y_pred):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+
+    return np.mean((y_true - y_pred)**2)
+
+
+# Returns the derivative of the mse_loss function.
+def mse_loss_derivative(y_true, y_pred):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+
+    return 2 * (y_pred - y_true) / len(y_true)
+
+
+# Gradient clipping technique involves clipping the gradients during backpropagation to ensure they do not exceed 
+# a certain threshold, thus maintaining stability.
+def clip_gradients(gradients, max_value=1.0):
+    return np.clip(gradients, -max_value, max_value)
+
+
+def preprocess_text(text, language='english'):
+    # Convert to lower case
+    text = text.lower()
+    # Remove punctuation
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    # Tokenize
+    tokens = word_tokenize(text, language=language)
+    # Remove stopwords and stem the words
+    stop_words = set(stopwords.words(language))
+
+    stemmer = PorterStemmer()
+    processed_tokens = [stemmer.stem(word) for word in tokens if not word in stop_words]
+
+    return ' '.join(processed_tokens)
 
 
 def save_model(model_name, data):
