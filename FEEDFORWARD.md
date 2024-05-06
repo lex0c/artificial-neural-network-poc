@@ -1,38 +1,67 @@
-# Feedforward
+# FeedForward
 
-Basic implementation of a feedforward neural network. The network can be customized with various activation functions and multiple layers to suit different tasks.
+This custom neural network framework provides a basic implementation for creating and training feedforward neural networks. It includes several activation functions, a method for loss computation, and utilities for saving and loading models.
 
 ## Requirements
 
 - `numpy`
 
-## Features
+## Install Deps:
 
-- **Custom Activation Functions**: Supports commonly used activation functions including `ReLU`, `Sigmoid`, `Softmax`, and `Linear`.
-
-- **Modularity**: Each layer and neuron is modularly constructed to allow flexibility in building the network architecture.
-
-- **Verbosity Option**: For those who wish to see the detailed output of each layer and neuron during the forward pass, a verbosity option is included.
+```sh
+pip install -r requirements.txt
+```
 
 ## Usage
 
-1. **Initialization**:
-   ```python
-   ff = FeedForward(verbose=True)
-   ```
+### Create Model
 
-2. **Add Layers**:
-   Add layers, specifying the number of inputs, number of neurons, and the activation function.
-   ```python
-   ff.add_layer(num_inputs=3, num_neurons=5, act_fn="relu")
-   ff.add_layer(num_inputs=5, num_neurons=1, act_fn="sigmoid")
-   ```
+Create a neural network by instantiating the `FeedForward` class and adding layers to it:
 
-3. **Forward Pass**:
-   Run a forward pass through the network using the `forward` method.
-   ```python
-   input_values = [0.5, 0.1, 0.3]
-   output = ff.forward(input_values)
-   print(output)
-   ```
+```python
+from feedforward import FeedForward
+
+model = FeedForward(verbose=True)
+model.add_layer(num_inputs=3, num_neurons=5, act_fn='relu')
+model.add_layer(num_inputs=5, num_neurons=1, act_fn='sigmoid')
+model.summary()
+```
+
+### Train the Model
+
+Provide training data and target values to train the network:
+
+```python
+inputs = [[-1.7021547074061765], [-2.34438654901332], [-4.749754186552664], [-5.56165352474812], [9.078507501353958]]
+targets = [[-4.404309414812353], [-5.68877309802664], [-10.499508373105328], [-12.12330704949624], [17.157015002707915]]
+
+model.train(inputs, targets, epochs=100, learning_rate=0.001)
+
+test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
+
+print(test_loss, test_accuracy)
+```
+
+### Save and Load Models
+
+Save the trained model to a file and load it later:
+
+```python
+# Saving the model
+model.save('path_to_save_models/model.json')
+
+# Loading the model
+from feedforward import load_model
+
+model = load_model('path_to_save_model/model.json', verbose=True)
+```
+
+### Making Predictions
+
+Use the trained network to make predictions on new data:
+
+```python
+predictions = model.predict([6.179484095266723])
+print(predictions) # ~11.35
+```
 

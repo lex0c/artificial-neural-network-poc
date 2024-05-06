@@ -1,16 +1,6 @@
 import math
-import json
 import random
 import numpy as np
-import nltk
-import string
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import PorterStemmer
-
-
-nltk.download('punkt')
-nltk.download('stopwords')
 
 
 # It is an activation function that resets all negative values and keeps all positive values as they are. 
@@ -70,9 +60,10 @@ def activation_derivative(act_fn, z):
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
 # specific range, usually [0, 1] or [-1, 1].
 def normalize_minmax(data):
-    min_val = min(data)
-    max_val = max(data)
-    return [(x - min_val) / (max_val - min_val) for x in data]
+    min_vals = np.min(data, axis=0)
+    max_vals = np.max(data, axis=0)
+
+    return (data - min_vals) / (max_vals - min_vals)
 
 
 # This function is responsible for converting an element into a "one-hot encode" representation. 
@@ -120,33 +111,5 @@ def mse_loss_derivative(y_true, y_pred):
 # a certain threshold, thus maintaining stability.
 def clip_gradients(gradients, max_value=1.0):
     return np.clip(gradients, -max_value, max_value)
-
-
-def preprocess_text(text, language='english'):
-    # Convert to lower case
-    text = text.lower()
-    # Remove punctuation
-    text = text.translate(str.maketrans('', '', string.punctuation))
-    # Tokenize
-    tokens = word_tokenize(text, language=language)
-    # Remove stopwords and stem the words
-    stop_words = set(stopwords.words(language))
-
-    stemmer = PorterStemmer()
-    processed_tokens = [stemmer.stem(word) for word in tokens if not word in stop_words]
-
-    return ' '.join(processed_tokens)
-
-
-def save_model(model_name, data):
-    path = 'models/' + model_name + '.json'
-    with open(path, 'w') as file:
-        json.dump(data, file, indent=2)
-
-
-def load_model(model_name):
-    path = 'models/' + model_name + '.json'
-    with open(path, 'r') as file:
-        return json.load(file)
 
 
