@@ -2,16 +2,6 @@
 
 This custom neural network framework provides a basic implementation for creating and training feedforward neural networks. It includes several activation functions, a method for loss computation, and utilities for saving and loading models.
 
-## Requirements
-
-- `numpy`
-
-## Install Deps:
-
-```sh
-pip install -r requirements.txt
-```
-
 ## Usage
 
 ### Create Model
@@ -37,9 +27,8 @@ targets = [[-4.404309414812353], [-5.68877309802664], [-10.499508373105328], [-1
 
 model.train(inputs, targets, epochs=100, learning_rate=0.001)
 
-test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
-
-print(test_loss, test_accuracy)
+#test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
+#print(test_loss, test_accuracy)
 ```
 
 ### Save and Load Models
