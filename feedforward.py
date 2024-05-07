@@ -1,23 +1,16 @@
 import math
 import random
-import json
+import numpy as np
+from joblib import dump, load
 
 from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative
 
 
 def neuron(values, weights, bias, act_fn):
-    if len(values) != len(weights):
-        raise ValueError("Sizes of values and weights must be the same!")
+    # Matrix multiplication to handle batch processing
+    linear_combination = np.dot(values, weights) + bias  # bias will be broadcast
 
-    linear_combination = 0
     output = 0
-
-    # Linear combination of values and weights
-    for value, weight in zip(values, weights):
-        linear_combination += value * weight
-
-    # Add bias
-    linear_combination += bias
 
     # Pass the linear combination through the activation function
     if act_fn == "relu":
@@ -33,28 +26,20 @@ def neuron(values, weights, bias, act_fn):
 
 
 def layer(values, weights, biases, act_fn, verbose=False):
-    if len(weights) != len(biases):
-        raise ValueError("Sizes of weights and biases must be the same!")
+    outputs = []
 
-    # Number of neurons
-    size = len(weights)
+    for i in range(len(weights)):  # Iterate over each neuron
+        output = neuron(values, weights[i], biases[i], act_fn)
+        outputs.append(output)
 
-    # Init empty array
-    output = [0]*size
+    # Stack outputs to maintain batch structure
+    outputs = np.stack(outputs, axis=-1)  # shape (batch_size, num_neurons)
 
-    # Run neurons
-    for i in range(size):
-        output[i] = neuron(values, weights[i], biases[i], act_fn)
-
-        if verbose:
-            print(f"Neuron {i+1}: {output[i]}")
-
-    return output
+    return outputs
 
 
-def load_model(filepath, verbose=False):
-    with open(filepath, 'r') as file:
-        return FeedForward(layers=json.load(file), verbose=verbose)
+def load_model(filepath):
+    return FeedForward(layers=load(filepath))
 
 
 class FeedForward:
@@ -187,6 +172,5 @@ class FeedForward:
         return None, None
 
     def save(self, filepath):
-        with open(filepath, 'w') as file:
-            json.dump(self.layers, file, indent=2)
+            dump(self.layers, filepath)
 

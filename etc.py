@@ -44,7 +44,7 @@ def linear(x):
 
 # Returns the derivative of the linear function, which is 1.
 def linear_derivative(x):
-    return 1
+    return np.ones_like(x)
 
 
 # Add other activation functions as needed
