@@ -37,12 +37,12 @@ Save the trained model to a file and load it later:
 
 ```python
 # Saving the model
-model.save('path_to_save_models/model.json')
+model.save('path_to_save_models/model.joblib')
 
 # Loading the model
 from feedforward import load_model
 
-model = load_model('path_to_save_model/model.json', verbose=True)
+model = load_model('path_to_save_model/model.joblib')
 ```
 
 ### Making Predictions
