@@ -15,12 +15,12 @@ model = load_model('models/cartpole.joblib')
 model.summary()
 
 
-episodes = 480
+episodes = 100
 memory = deque(maxlen=500000)
 batch_size = 512
 train_data = {'states': [], 'targets': []}
 
-gamma = 0.999
+gamma = 0.99
 learning_rate= 0.0001
 
 
