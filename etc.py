@@ -80,16 +80,6 @@ def one_hot_encode(unique_elements, element):
     return encoding
 
 
-# This function represents an epsilon-greedy strategy applied to softmax probabilities. 
-# It takes as input a list of softmax probabilities, softmax_probs, and an epsilon value that controls 
-# the ratio between exploration and exploitation.
-def epsilon_greedy_softmax(softmax_probs, epsilon=0.1):
-    if random.uniform(0, 1) < epsilon:  # Explore: Choose a random action.
-        return random.randint(0, len(softmax_probs) - 1)
-    else:  # Exploit: Choose action based on softmax probabilities.
-        return max(range(len(softmax_probs)), key=lambda i: softmax_probs[i])
-
-
 # The MSE measures the average of the squares of the differences between the predicted values and the actual values. 
 # It provides a simple and effective means of assessing the performance of a model.
 def mse_loss(y_true, y_pred):
