@@ -3,7 +3,7 @@ import random
 import numpy as np
 from joblib import dump, load
 
-from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative
+from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative, clip_gradients
 
 
 def neuron(values, weights, bias, act_fn):
@@ -66,9 +66,6 @@ class FeedForward:
         values = input_values
 
         for i, layer_param in enumerate(self.layers):
-            if self.verbose:
-                print(f"Processing Layer {i+1}")
-
             values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"], self.verbose)
             layer_param["output"] = values
 
@@ -89,6 +86,7 @@ class FeedForward:
 
                 # Calculates the gradient of the loss in relation to the output
                 gradients = mse_loss_derivative(target, predictions)
+                gradients = clip_gradients(gradients)
 
                 # Backpropagation
                 self.backward(gradients, input_values)
@@ -96,7 +94,6 @@ class FeedForward:
             print(f"Epoch: {epoch+1}, Loss: {total_loss / len(inputs)}")
 
     def backward(self, gradients, input_values):
-        # Propagates the output gradient backwards
         for i in reversed(range(len(self.layers))):
             layer = self.layers[i]
             incoming_gradients = []
@@ -169,8 +166,27 @@ class FeedForward:
         print("\n")
 
     def evaluate(self, test_inputs, test_labels):
-        return None, None
+        total_loss = 0
+        correct_predictions = 0
+        num_samples = len(test_inputs)
+
+        for input_values, true_values in zip(test_inputs, test_labels):
+            predictions = self.predict(input_values)
+
+            # Calculate loss
+            loss = mse_loss(true_values, predictions)
+            total_loss += loss
+
+            # Calculate accuracy
+            if np.argmax(predictions) == np.argmax(true_values):
+                correct_predictions += 1
+
+        # Calculate mean loss and accuracy
+        loss = total_loss / num_samples
+        accuracy = correct_predictions / num_samples
+
+        return loss, accuracy
 
     def save(self, filepath):
-            dump(self.layers, filepath)
+        dump(self.layers, filepath)
 

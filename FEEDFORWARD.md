@@ -27,8 +27,9 @@ targets = [[-4.404309414812353], [-5.68877309802664], [-10.499508373105328], [-1
 
 model.train(inputs, targets, epochs=100, learning_rate=0.001)
 
-#test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
-#print(test_loss, test_accuracy)
+test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
+print(f"Test Accuracy: {test_accuracy*100:.2f}%")
+print(f"Test Loss: {test_loss:.2f}")
 ```
 
 ### Save and Load Models

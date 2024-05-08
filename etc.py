@@ -99,7 +99,12 @@ def mse_loss_derivative(y_true, y_pred):
 
 # Gradient clipping technique involves clipping the gradients during backpropagation to ensure they do not exceed 
 # a certain threshold, thus maintaining stability.
-def clip_gradients(gradients, max_value=1.0):
-    return np.clip(gradients, -max_value, max_value)
+def clip_gradients(gradients, max_norm=1.0):
+    total_norm = np.sqrt(sum(np.sum(g**2) for g in gradients))
 
+    if total_norm > max_norm:
+        scale = max_norm / total_norm
+        gradients = [g * scale for g in gradients]
+
+    return gradients
 
