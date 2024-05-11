@@ -19,7 +19,7 @@ model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
 model.summary()
 
 
-episodes = 1000
+episodes = 500
 memory = deque(maxlen=100000)
 batch_size = 512
 train_data = {'states': [], 'targets': []}
@@ -28,8 +28,9 @@ start_epsilon = 1.0
 epsilon_min = 0.1
 epsilon = start_epsilon
 epsilon_decay = 0.990
-gamma = 0.95
-learning_rate= 0.0001
+gamma = 0.80  # high values cause the gradient to explode
+learning_rate = 0.001
+learning_rate_decay = 0.99
 
 rolling_rewards = deque(maxlen=100)
 
@@ -147,16 +148,16 @@ for e in range(episodes):
                 'duration': episode_duration,
                 'epsilon': epsilon,
                 'steps': step_count,
-                #'learning_rate': learning_rate
+                'learning_rate': learning_rate
             })
 
-            print(f"episode: {e+1} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - epsilon: {epsilon:.3f} - steps: {step_count}")
+            print(f"episode: {e+1}/{episodes} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - epsilon: {epsilon:.3f} - steps: {step_count}")
             break
 
     epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
-    #if e % 100 == 0:
-    #    learning_rate *= 0.999  # decay
+    #if e % 200 == 0:
+    #    learning_rate *= learning_rate_decay
 
 
 model.save('models/cartpole.joblib')

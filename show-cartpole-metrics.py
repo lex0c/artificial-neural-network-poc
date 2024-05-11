@@ -1,9 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
 data = pd.read_csv('metrics/cartpole.csv')
-
 unique_keys = data['metrics_key'].unique()
 
 plt.style.use('ggplot')
@@ -13,7 +11,7 @@ for key in unique_keys:
     session_data = data[data['metrics_key'] == key]
 
     # Create a figure and a set of subplots
-    fig, axs = plt.subplots(nrows=3, ncols=2, figsize=(15, 15))
+    fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(18, 15))
     fig.suptitle(f'Cart Pole - {key}', fontsize=16)
 
     # Total reward per episode
@@ -30,31 +28,36 @@ for key in unique_keys:
 
     # Loss per episode (if available)
     if 'loss' in session_data.columns and session_data['loss'].notna().any():
-        axs[1, 0].plot(session_data['episode'], session_data['loss'], marker='o', linestyle='-', color='g')
-        axs[1, 0].set_title('Loss per Episode')
-        axs[1, 0].set_xlabel('Episode')
-        axs[1, 0].set_ylabel('Loss')
+        axs[0, 2].plot(session_data['episode'], session_data['loss'], marker='o', linestyle='-', color='g')
+        axs[0, 2].set_title('Loss per Episode')
+        axs[0, 2].set_xlabel('Episode')
+        axs[0, 2].set_ylabel('Loss')
 
     # Duration per episode
-    axs[1, 1].plot(session_data['episode'], session_data['duration'], marker='o', linestyle='-', color='m')
-    axs[1, 1].set_title('Duration per Episode')
-    axs[1, 1].set_xlabel('Episode')
-    axs[1, 1].set_ylabel('Duration (s)')
+    axs[1, 0].plot(session_data['episode'], session_data['duration'], marker='o', linestyle='-', color='m')
+    axs[1, 0].set_title('Duration per Episode')
+    axs[1, 0].set_xlabel('Episode')
+    axs[1, 0].set_ylabel('Duration (s)')
 
-    # Epsilon decay per episode
-    axs[2, 0].plot(session_data['episode'], session_data['epsilon'], marker='o', linestyle='-', color='c')
-    axs[2, 0].set_title('Epsilon Decay Over Episodes')
-    axs[2, 0].set_xlabel('Episode')
-    axs[2, 0].set_ylabel('Epsilon')
+    # Epsilon per episode
+    axs[1, 1].plot(session_data['episode'], session_data['epsilon'], marker='o', linestyle='-', color='c')
+    axs[1, 1].set_title('Epsilon Over Episodes')
+    axs[1, 1].set_xlabel('Episode')
+    axs[1, 1].set_ylabel('Epsilon')
 
     # Steps per episode
-    axs[2, 1].plot(session_data['episode'], session_data['steps'], marker='o', linestyle='-', color='y')
-    axs[2, 1].set_title('Steps per Episode')
-    axs[2, 1].set_xlabel('Episode')
-    axs[2, 1].set_ylabel('Steps')
+    axs[1, 2].plot(session_data['episode'], session_data['steps'], marker='o', linestyle='-', color='y')
+    axs[1, 2].set_title('Steps per Episode')
+    axs[1, 2].set_xlabel('Episode')
+    axs[1, 2].set_ylabel('Steps')
+
+    # Learning rate per episode
+    axs[2, 0].plot(session_data['episode'], session_data['learning_rate'], marker='o', linestyle='-', color='purple')
+    axs[2, 0].set_title('Learning Rate Over Episodes')
+    axs[2, 0].set_xlabel('Episode')
+    axs[2, 0].set_ylabel('Learning Rate')
 
     plt.tight_layout(pad=3.0)
     plt.savefig(f'cartpole_{key}.png', dpi=300)
-    #plt.show()
     plt.close(fig)
 

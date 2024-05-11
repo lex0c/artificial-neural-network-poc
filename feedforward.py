@@ -95,16 +95,18 @@ class FeedForward:
                 #gradients /= (np.linalg.norm(gradients, ord=2) + 1e-8)
 
                 # Backpropagation
-                self.backward_stable(gradients, input_values)
+                #self.backward_stable(gradients, input_values)
+                self.backward_unstable(gradients, input_values)
 
             epoch_loss /= len(inputs)
             total_loss += epoch_loss
 
-            print(f"Epoch: {epoch+1}, Loss: {epoch_loss}, LR: {self.learning_rate}")
+            print(f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}, LR: {self.learning_rate}")
 
         average_loss_over_epochs = total_loss / epochs
         return average_loss_over_epochs, self.learning_rate
 
+    # Worse performance, but more stable
     def backward_stable(self, gradients, input_values):
         for i in reversed(range(len(self.layers))):
             layer = self.layers[i]
@@ -144,7 +146,7 @@ class FeedForward:
 
             gradients = incoming_gradients
 
-    # The use of matrix operations, can be more susceptible to numerical instabilities due to the less controlled way in which gradients are propagated and applied.
+    # Better performance, but more susceptible to gradient explosion
     def backward_unstable(self, gradients, input_values):
         for i in reversed(range(len(self.layers))):
             layer = self.layers[i]

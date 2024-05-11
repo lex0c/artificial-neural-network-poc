@@ -5,7 +5,7 @@ import time
 from feedforward import load_model
 
 
-model = load_model('models/cartpole-finetuned.joblib')
+model = load_model('models/cartpole.joblib')
 model.summary()
 
 env = gym.make("CartPole-v1", render_mode="human")
@@ -39,7 +39,7 @@ for e in range(episodes):
         if done:
             end_time = time.time()
             episode_duration = end_time - start_time
-            print(f"episode: {e+1} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - steps: {step_count}")
+            print(f"episode: {e+1}/{episodes} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - steps: {step_count}")
             break
 
 
