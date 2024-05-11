@@ -1,9 +1,10 @@
 import numpy as np
 import gymnasium as gym
-import datetime
+from datetime import datetime
 from collections import deque
 import random
 import time
+import csv
 
 from feedforward import FeedForward
 
@@ -18,17 +19,34 @@ model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
 model.summary()
 
 
-episodes = 1500
+episodes = 1000
 memory = deque(maxlen=100000)
-batch_size = 80
+batch_size = 512
 train_data = {'states': [], 'targets': []}
 
 start_epsilon = 1.0
 epsilon_min = 0.1
 epsilon = start_epsilon
-epsilon_decay = 0.996
-gamma = 0.99
+epsilon_decay = 0.990
+gamma = 0.95
 learning_rate= 0.0001
+
+rolling_rewards = deque(maxlen=100)
+
+metrics_filepath = 'metrics/cartpole.csv'
+metrics_key = datetime.now().strftime('%Y%m%d%H%M%S')
+
+
+def write_to_csv(metric):
+    with open(metrics_filepath, 'a', newline='') as file:
+        fieldnames = list(metric.keys())
+
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+
+        if file.tell() == 0:
+            writer.writeheader()
+
+        writer.writerow(metric)
 
 
 def choose_action(state):
@@ -74,9 +92,10 @@ def replay_experience(replay_memory):
 
 def train_model(train_data):
     if train_data['states']:
-        model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate)
+        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate)
         train_data['states'].clear()
         train_data['targets'].clear()
+        return loss
 
 
 for e in range(episodes):
@@ -104,19 +123,40 @@ for e in range(episodes):
         if done:
             end_time = time.time()
             episode_duration = end_time - start_time
+
+            rolling_rewards.append(total_reward)
+            average_rolling_reward = sum(rolling_rewards) / len(rolling_rewards)
+
+            training_data = replay_experience(memory)
+
+            if training_data:
+                states, targets = training_data
+                train_data['states'].extend(states)
+                train_data['targets'].extend(targets)
+
+            loss = None
+            if len(train_data['states']) >= batch_size:
+                loss = train_model(train_data)
+
+            write_to_csv({
+                'metrics_key': metrics_key,
+                'episode': e+1,
+                'total_reward': total_reward,
+                'average_rolling_reward': average_rolling_reward,
+                'loss': loss,
+                'duration': episode_duration,
+                'epsilon': epsilon,
+                'steps': step_count,
+                #'learning_rate': learning_rate
+            })
+
             print(f"episode: {e+1} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - epsilon: {epsilon:.3f} - steps: {step_count}")
             break
 
-    training_data = replay_experience(memory)
-    if training_data:
-        states, targets = training_data
-        train_data['states'].extend(states)
-        train_data['targets'].extend(targets)
-
-    if len(train_data['states']) >= batch_size:
-        train_model(train_data)
-
     epsilon = max(epsilon_min, epsilon * epsilon_decay)
+
+    #if e % 100 == 0:
+    #    learning_rate *= 0.999  # decay
 
 
 model.save('models/cartpole.joblib')
