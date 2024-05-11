@@ -8,7 +8,7 @@ from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, a
 
 def neuron(values, weights, bias, act_fn):
     # Matrix multiplication to handle batch processing
-    linear_combination = np.dot(values, weights) + bias  # bias will be broadcast
+    linear_combination = np.dot(values, weights.T) + bias  # bias will be broadcast
 
     output = 0
 
@@ -46,18 +46,20 @@ class FeedForward:
     def __init__(self, layers=[], verbose=False):
         self.layers = layers
         self.verbose = verbose
-        self.learning_rate = 0.001
+        self.learning_rate = 0.0001
 
     def add_layer(self, num_inputs, num_neurons, act_fn):
         if act_fn == "relu":
-            limit = math.sqrt(2 / num_inputs) # He initialization for ReLU
+            std_dev = math.sqrt(2 / num_inputs) # He initialization for ReLU
         else:
-            limit = 1 / math.sqrt(num_inputs) # Xavier initialization for other activations
+            std_dev = math.sqrt(1 / num_inputs) # Xavier initialization for other activations
+
+        weights = np.random.normal(0, std_dev, (num_neurons, num_inputs))
+        biases = np.random.normal(0, std_dev, num_neurons)
 
         self.layers.append({
-            # The code below generates a list of lists, where each internal list represents the weights for a neuron in the neural network layer.
-            "weights": [[random.uniform(-limit, limit) for _ in range(num_inputs)] for _ in range(num_neurons)],
-            "biases": [random.uniform(-limit, limit) for _ in range(num_neurons)],
+            "weights": weights,
+            "biases": biases,
             "act_fn": act_fn,
             "output": []
         })
@@ -65,7 +67,7 @@ class FeedForward:
     def forward(self, input_values):
         values = input_values
 
-        for i, layer_param in enumerate(self.layers):
+        for layer_param in self.layers:
             values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"], self.verbose)
             layer_param["output"] = values
 
@@ -73,27 +75,37 @@ class FeedForward:
 
     def train(self, inputs, targets, epochs, learning_rate):
         self.learning_rate = learning_rate
+        total_loss = 0
 
         for epoch in range(epochs):
-            total_loss = 0
+            epoch_loss = 0
 
             for input_values, target in zip(inputs, targets):
                 predictions = self.forward(input_values)
 
                 # Calculates the loss
                 loss = mse_loss(target, predictions)
-                total_loss += loss
+                epoch_loss += loss
 
                 # Calculates the gradient of the loss in relation to the output
                 gradients = mse_loss_derivative(target, predictions)
-                gradients = clip_gradients(gradients)
+
+                # Clip and normalize gradients
+                #gradients = clip_gradients(gradients, 10.0)
+                #gradients /= (np.linalg.norm(gradients, ord=2) + 1e-8)
 
                 # Backpropagation
-                self.backward(gradients, input_values)
+                self.backward_stable(gradients, input_values)
 
-            print(f"Epoch: {epoch+1}, Loss: {total_loss / len(inputs)}")
+            epoch_loss /= len(inputs)
+            total_loss += epoch_loss
 
-    def backward(self, gradients, input_values):
+            print(f"Epoch: {epoch+1}, Loss: {epoch_loss}, LR: {self.learning_rate}")
+
+        average_loss_over_epochs = total_loss / epochs
+        return average_loss_over_epochs, self.learning_rate
+
+    def backward_stable(self, gradients, input_values):
         for i in reversed(range(len(self.layers))):
             layer = self.layers[i]
             incoming_gradients = []
@@ -131,6 +143,32 @@ class FeedForward:
                         incoming_gradients[k] += layer["weights"][j][k] * delta
 
             gradients = incoming_gradients
+
+    def backward_unstable(self, gradients, input_values):
+        for i in reversed(range(len(self.layers))):
+            layer = self.layers[i]
+
+            current_output = layer["output"]
+            previous_output = self.layers[i-1]["output"] if i > 0 else input_values
+
+            # Calculates the derivative of the activation function
+            d_activation = activation_derivative(layer["act_fn"], current_output)
+
+            # Gradient of the error in relation to the neuron's output
+            delta = gradients * d_activation
+
+            # Updates weights and biases
+            if i > 0:  # If it's not the first layer, it uses the output of the previous layer
+                grad_weight = np.outer(delta, previous_output)
+            else:  # For the first layer, use the original input_values
+                grad_weight = np.outer(delta, input_values)
+
+            layer["weights"] -= self.learning_rate * grad_weight
+            layer["biases"] -= self.learning_rate * delta.mean(axis=0)  # Use of mean for size compatibility
+
+            # Prepares the gradient for the next layer (previous in the order of execution)
+            if i > 0:
+                gradients = np.dot(layer["weights"].T, delta)
 
     def predict(self, input_data):
         return self.forward(input_data)

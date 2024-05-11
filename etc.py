@@ -83,28 +83,26 @@ def one_hot_encode(unique_elements, element):
 # The MSE measures the average of the squares of the differences between the predicted values and the actual values. 
 # It provides a simple and effective means of assessing the performance of a model.
 def mse_loss(y_true, y_pred):
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-
-    return np.mean((y_true - y_pred)**2)
+    return np.mean((y_pred - y_true) ** 2, axis=0)
 
 
 # Returns the derivative of the mse_loss function.
 def mse_loss_derivative(y_true, y_pred):
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-
     return 2 * (y_pred - y_true) / len(y_true)
 
 
 # Gradient clipping technique involves clipping the gradients during backpropagation to ensure they do not exceed 
 # a certain threshold, thus maintaining stability.
-def clip_gradients(gradients, max_norm=1.0):
-    total_norm = np.sqrt(sum(np.sum(g**2) for g in gradients))
+def clip_gradients(gradients, threshold=5.0):
+    original_gradients = np.copy(gradients)
+    clipped_gradients = np.clip(gradients, -threshold, threshold)
 
-    if total_norm > max_norm:
-        scale = max_norm / total_norm
-        gradients = [g * scale for g in gradients]
+    # Check if clipping has taken place
+    if np.any(clipped_gradients != original_gradients):
+        clipping_locations = np.where(clipped_gradients != original_gradients)
+        print("Clipped indices:", clipping_locations)
+        print("Original gradients at clipped positions:", original_gradients[clipping_locations])
+        print("Clipped gradients at clipped positions:", clipped_gradients[clipping_locations])
 
-    return gradients
+    return clipped_gradients
 
