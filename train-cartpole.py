@@ -20,7 +20,7 @@ model.summary()
 
 
 episodes = 500
-memory = deque(maxlen=100000)
+memory = deque(maxlen=500000)
 batch_size = 512
 train_data = {'states': [], 'targets': []}
 
@@ -156,7 +156,7 @@ for e in range(episodes):
 
     epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
-    #if e % 200 == 0:
+    #if e > 0 and e % 200 == 0:
     #    learning_rate *= learning_rate_decay
 
 

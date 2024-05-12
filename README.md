@@ -46,4 +46,8 @@ Train model
 python train-cartpole.py
 ```
 
+Show training metrics
+```sh
+python show-cartpole-metrics.py
+```
 

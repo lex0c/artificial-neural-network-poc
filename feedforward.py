@@ -91,7 +91,7 @@ class FeedForward:
                 gradients = mse_loss_derivative(target, predictions)
 
                 # Clip and normalize gradients
-                #gradients = clip_gradients(gradients, 10.0)
+                gradients = clip_gradients(gradients, 10.0)
                 #gradients /= (np.linalg.norm(gradients, ord=2) + 1e-8)
 
                 # Backpropagation
