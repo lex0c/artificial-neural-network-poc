@@ -5,7 +5,7 @@ import time
 from feedforward import load_model
 
 
-model = load_model('models/cartpole.joblib')
+model = load_model('models/cartpole-finetuned.joblib')
 model.summary()
 
 env = gym.make("CartPole-v1", render_mode="human")

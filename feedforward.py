@@ -73,7 +73,7 @@ class FeedForward:
 
         return values
 
-    def train(self, inputs, targets, epochs, learning_rate):
+    def train(self, inputs, targets, epochs, learning_rate, l1_lambda=0.0, l2_lambda=0.0):
         self.learning_rate = learning_rate
         total_loss = 0
 
@@ -96,7 +96,7 @@ class FeedForward:
 
                 # Backpropagation
                 #self.backward_stable(gradients, input_values)
-                self.backward_unstable(gradients, input_values)
+                self.backward_unstable(gradients, input_values, l1_lambda, l2_lambda)
 
             epoch_loss /= len(inputs)
             total_loss += epoch_loss
@@ -147,7 +147,7 @@ class FeedForward:
             gradients = incoming_gradients
 
     # Better performance, but more susceptible to gradient explosion
-    def backward_unstable(self, gradients, input_values):
+    def backward_unstable(self, gradients, input_values, l1_lambda=0.0, l2_lambda=0.0):
         for i in reversed(range(len(self.layers))):
             layer = self.layers[i]
 
@@ -165,6 +165,11 @@ class FeedForward:
                 grad_weight = np.outer(delta, previous_output)
             else:  # For the first layer, use the original input_values
                 grad_weight = np.outer(delta, input_values)
+
+            # L2 regularization
+            grad_weight += l2_lambda * layer["weights"]
+            # L1 regularization
+            grad_weight += l1_lambda * np.sign(layer["weights"])
 
             layer["weights"] -= self.learning_rate * grad_weight
             layer["biases"] -= self.learning_rate * delta.mean(axis=0)  # Use of mean for size compatibility

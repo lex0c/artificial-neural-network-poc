@@ -14,13 +14,13 @@ env.reset()
 
 model = FeedForward(verbose=False)
 model.add_layer(num_inputs=env.observation_space.shape[0], num_neurons=64, act_fn='relu')
-model.add_layer(num_inputs=64, num_neurons=64, act_fn='relu')
+#model.add_layer(num_inputs=64, num_neurons=64, act_fn='relu')
 model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
 model.summary()
 
 
 episodes = 500
-memory = deque(maxlen=500000)
+memory = deque(maxlen=100000)
 batch_size = 512
 train_data = {'states': [], 'targets': []}
 
@@ -30,7 +30,6 @@ epsilon = start_epsilon
 epsilon_decay = 0.990
 gamma = 0.80  # high values cause the gradient to explode
 learning_rate = 0.001
-learning_rate_decay = 0.99
 
 rolling_rewards = deque(maxlen=100)
 
@@ -93,7 +92,7 @@ def replay_experience(replay_memory):
 
 def train_model(train_data):
     if train_data['states']:
-        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate)
+        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate, l1_lambda=0.0001, l2_lambda=0.0001)
         train_data['states'].clear()
         train_data['targets'].clear()
         return loss
@@ -155,9 +154,6 @@ for e in range(episodes):
             break
 
     epsilon = max(epsilon_min, epsilon * epsilon_decay)
-
-    #if e > 0 and e % 200 == 0:
-    #    learning_rate *= learning_rate_decay
 
 
 model.save('models/cartpole.joblib')
