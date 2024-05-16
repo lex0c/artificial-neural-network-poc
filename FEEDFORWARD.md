@@ -55,3 +55,15 @@ predictions = model.predict([6.179484095266723])
 print(predictions) # ~11.35
 ```
 
+### Clone the model
+
+```python
+from feedforward import clone_model
+
+new_model = clone_model(model)
+new_model.summary()
+
+# Update the new model weights using the original model weights
+new_model.set_layers(model.get_layers())
+```
+

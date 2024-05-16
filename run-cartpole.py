@@ -5,13 +5,13 @@ import time
 from feedforward import load_model
 
 
-model = load_model('models/cartpole-finetuned.joblib')
+model = load_model('models/cartpole-checkpoint.joblib')
 model.summary()
 
 env = gym.make("CartPole-v1", render_mode="human")
 env.reset()
 
-episodes = 10
+episodes = 30
 epsilon = -1
 
 

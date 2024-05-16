@@ -6,35 +6,40 @@ import random
 import time
 import csv
 
-from feedforward import FeedForward
+from feedforward import FeedForward, clone_model
 
 
 env = gym.make("CartPole-v1", render_mode="human")
 env.reset()
 
+
 model = FeedForward(verbose=False)
 model.add_layer(num_inputs=env.observation_space.shape[0], num_neurons=64, act_fn='relu')
-#model.add_layer(num_inputs=64, num_neurons=64, act_fn='relu')
 model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
 model.summary()
+
+target_model = clone_model(model)
+target_model.summary()
 
 
 episodes = 500
 memory = deque(maxlen=100000)
-batch_size = 512
+batch_size = 256
 train_data = {'states': [], 'targets': []}
 
 start_epsilon = 1.0
 epsilon_min = 0.1
 epsilon = start_epsilon
-epsilon_decay = 0.990
-gamma = 0.80  # high values cause the gradient to explode
+epsilon_decay = 0.995
+gamma = 0.92 # high values cause the gradient to explode
 learning_rate = 0.001
 
 rolling_rewards = deque(maxlen=100)
 
 metrics_filepath = 'metrics/cartpole.csv'
 metrics_key = datetime.now().strftime('%Y%m%d%H%M%S')
+
+target_update_freq = 10
 
 
 def write_to_csv(metric):
@@ -73,7 +78,8 @@ def replay_experience(replay_memory):
     next_states = np.vstack(next_states)  # Stack next states vertically
 
     # Predict Q-values for next_states and current states in one go
-    next_q_values = model.predict(next_states)
+    #next_q_values = model.predict(next_states)
+    next_q_values = target_model.predict(next_states)
     current_q_values = model.predict(states)
 
     # Calculate the maximum Q-value for each next state
@@ -154,6 +160,9 @@ for e in range(episodes):
             break
 
     epsilon = max(epsilon_min, epsilon * epsilon_decay)
+
+    if e % target_update_freq == 0:
+        target_model.set_layers(model.get_layers())  # Update target network
 
 
 model.save('models/cartpole.joblib')

@@ -1,5 +1,6 @@
 import math
 import random
+import copy
 import numpy as np
 from joblib import dump, load
 
@@ -40,6 +41,10 @@ def layer(values, weights, biases, act_fn, verbose=False):
 
 def load_model(filepath):
     return FeedForward(layers=load(filepath))
+
+
+def clone_model(model):
+    return FeedForward(layers=model.get_layers())
 
 
 class FeedForward:
@@ -235,4 +240,10 @@ class FeedForward:
 
     def save(self, filepath):
         dump(self.layers, filepath)
+
+    def get_layers(self):
+        return copy.deepcopy(self.layers)
+
+    def set_layers(self, layers):
+        self.layers = copy.deepcopy(layers)
 

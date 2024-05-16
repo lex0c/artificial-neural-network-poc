@@ -6,30 +6,37 @@ import random
 import time
 import csv
 
-from feedforward import load_model
+from feedforward import load_model, clone_model
 
-
-#model = load_model('models/cartpole.joblib')
-model = load_model('models/cartpole-finetuned.joblib')
-model.summary()
 
 env = gym.make("CartPole-v1", render_mode="human")
 env.reset()
 
+
+model = load_model('models/cartpole.joblib')
+model.summary()
+
+target_model = clone_model(model)
+target_model.summary()
+
+
 episodes = 500
 memory = deque(maxlen=100000)
-batch_size = 512
+batch_size = 128
 train_data = {'states': [], 'targets': []}
 
 epsilon = 0.1
-gamma = 0.95  # high values cause the gradient to explode
-learning_rate = 0.0001
+gamma = 0.80 # high values cause the gradient to explode
+learning_rate = 0.001
 learning_rate_decay = 0.99
 
 rolling_rewards = deque(maxlen=100)
+average_rolling_reward_last = 0
 
 metrics_filepath = 'metrics/cartpole.csv'
 metrics_key = datetime.now().strftime('%Y%m%d%H%M%S')
+
+target_update_freq = 10
 
 
 def write_to_csv(metric):
@@ -68,7 +75,8 @@ def replay_experience(replay_memory):
     next_states = np.vstack(next_states)  # Stack next states vertically
 
     # Predict Q-values for next_states and current states in one go
-    next_q_values = model.predict(next_states)
+    #next_q_values = model.predict(next_states)
+    next_q_values = target_model.predict(next_states)
     current_q_values = model.predict(states)
 
     # Calculate the maximum Q-value for each next state
@@ -122,6 +130,10 @@ for e in range(episodes):
             rolling_rewards.append(total_reward)
             average_rolling_reward = sum(rolling_rewards) / len(rolling_rewards)
 
+            if average_rolling_reward > average_rolling_reward_last:
+                average_rolling_reward_last = average_rolling_reward
+                model.save('models/cartpole-checkpoint.joblib')
+
             training_data = replay_experience(memory)
 
             if training_data:
@@ -150,6 +162,9 @@ for e in range(episodes):
 
     if e % 300 == 0:
         learning_rate *= learning_rate_decay
+
+    if e % target_update_freq == 0:
+        target_model.set_layers(model.get_layers())  # Update target network
 
 
 model.save('models/cartpole-finetuned.joblib')
