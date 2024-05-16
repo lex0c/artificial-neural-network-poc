@@ -106,3 +106,16 @@ def clip_gradients(gradients, threshold=5.0):
 
     return clipped_gradients
 
+
+# Normalizing gradients involves adjusting the scale of the gradients based on their norm before applying the weight 
+# update. This is done by dividing the gradients by their norm (or by some function of the norm). The aim is to ensure 
+# that the magnitude of the gradients is neither too large nor too small, while maintaining the direction of the gradients.
+def normalize_gradients(gradients):
+    norm = np.linalg.norm(gradients, ord=2)
+
+    if norm > 0:
+        gradients = gradients / norm
+
+    return gradients
+
+

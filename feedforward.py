@@ -3,7 +3,7 @@ import random
 import numpy as np
 from joblib import dump, load
 
-from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative, clip_gradients
+from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative, clip_gradients, normalize_gradients
 
 
 def neuron(values, weights, bias, act_fn):
@@ -55,7 +55,7 @@ class FeedForward:
             std_dev = math.sqrt(1 / num_inputs) # Xavier initialization for other activations
 
         weights = np.random.normal(0, std_dev, (num_neurons, num_inputs))
-        biases = np.random.normal(0, std_dev, num_neurons)
+        biases = np.zeros(num_neurons)
 
         self.layers.append({
             "weights": weights,
@@ -92,7 +92,7 @@ class FeedForward:
 
                 # Clip and normalize gradients
                 gradients = clip_gradients(gradients, 10.0)
-                #gradients /= (np.linalg.norm(gradients, ord=2) + 1e-8)
+                #gradients = normalize_gradients(gradients)
 
                 # Backpropagation
                 #self.backward_stable(gradients, input_values)
@@ -166,10 +166,10 @@ class FeedForward:
             else:  # For the first layer, use the original input_values
                 grad_weight = np.outer(delta, input_values)
 
-            # L2 regularization
-            grad_weight += l2_lambda * layer["weights"]
             # L1 regularization
             grad_weight += l1_lambda * np.sign(layer["weights"])
+            # L2 regularization
+            grad_weight += l2_lambda * layer["weights"]
 
             layer["weights"] -= self.learning_rate * grad_weight
             layer["biases"] -= self.learning_rate * delta.mean(axis=0)  # Use of mean for size compatibility
