@@ -31,6 +31,15 @@ test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
 print(f"Test Accuracy: {test_accuracy*100:.2f}%")
 print(f"Test Loss: {test_loss:.2f}")
 ```
+- **inputs**: Input data for training.
+- **targets**: Target labels for training.
+- **epochs**: Number of epochs to train the network.
+- **learning_rate**: Learning rate for weight updates.
+- **batch_size**: Size of each batch (default is 32).
+- **l1_lambda**: L1 regularization parameter (default is 0.0).
+- **l2_lambda**: L2 regularization parameter (default is 0.0).
+- **use_granular_update**: If true, uses a more granular backward, updating each weight individually (slower, default is False).
+- **verbose**: If True, print detailed training progress (default is False).
 
 ### Save and Load Models
 
