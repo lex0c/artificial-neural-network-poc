@@ -104,6 +104,33 @@ def mse_loss_derivative(y_true, y_pred):
     return 2 * (y_pred - y_true) / y_true.size
 
 
+# Sparse Categorical Crossentropy computes the loss between the true labels and the predicted probabilities output.
+# The true labels in this case are integers that represent the class indices directly, and the predicted probabilities
+# are typically the output of a softmax layer which converts logits to probabilities that sum to one.
+def sparse_categorical_crossentropy(y_true, y_pred):
+    # Calculate the logarithm of the predicted probabilities
+    log_probs = np.log(y_pred)
+
+    # Select the log probability corresponding to the true class for each instance
+    true_log_probs = log_probs[np.arange(len(log_probs)), y_true]
+
+    # Calculate the average loss
+    loss = -np.mean(true_log_probs)
+
+    return loss
+
+
+# Returns the derivative of the sparse_categorical_crossentropy function.
+def sparse_categorical_crossentropy_derivative(y_true, y_pred):
+    # Create an array of zeros with the same shape as y_pred
+    gradients = np.zeros_like(y_pred)
+
+    # For each sample, subtract 1 from the gradient corresponding to the true class
+    gradients[np.arange(len(y_true)), y_true] = -1 / y_pred[np.arange(len(y_true)), y_true]
+
+    return gradients
+
+
 # Gradient clipping technique involves clipping the gradients during backpropagation to ensure they do not exceed 
 # a certain threshold, thus maintaining stability.
 def clip_gradients(gradients, threshold=5.0):
@@ -132,6 +159,7 @@ def normalize_gradients(gradients):
     return gradients
 
 
+# Spliting a dataset into smaller chunks.
 def create_batches(inputs, targets, batch_size):
     for i in range(0, len(inputs), batch_size):
         yield inputs[i:i + batch_size], targets[i:i + batch_size]
