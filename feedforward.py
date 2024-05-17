@@ -4,7 +4,7 @@ import copy
 import numpy as np
 from joblib import dump, load
 
-from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative, clip_gradients, normalize_gradients
+from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative, clip_gradients, normalize_gradients, create_batches
 
 
 def neuron(values, weights, bias, act_fn):
@@ -78,38 +78,60 @@ class FeedForward:
 
         return values
 
-    def train(self, inputs, targets, epochs, learning_rate, l1_lambda=0.0, l2_lambda=0.0):
+    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0, use_granular_update=False, verbose=False):
         self.learning_rate = learning_rate
         total_loss = 0
 
         for epoch in range(epochs):
             epoch_loss = 0
+            batch_count = 0
 
-            for input_values, target in zip(inputs, targets):
-                predictions = self.forward(input_values)
+            for batch_inputs, batch_targets in create_batches(inputs, targets, batch_size):
+                batch_loss = 0
+                batch_count += 1
+                batch_count2 = 0
 
-                # Calculates the loss
-                loss = mse_loss(target, predictions)
-                epoch_loss += loss
+                if verbose:
+                    print(f"Epoch: {epoch+1}/{epochs}, Batch: {batch_count}/{len(inputs)//batch_size}")
 
-                # Calculates the gradient of the loss in relation to the output
-                gradients = mse_loss_derivative(target, predictions)
+                for input_values, target in zip(batch_inputs, batch_targets):
+                    predictions = self.forward(input_values)
 
-                # Clip and normalize gradients
-                gradients = clip_gradients(gradients, 10.0)
-                #gradients = normalize_gradients(gradients)
+                    # Calculates the loss
+                    loss = mse_loss(target, predictions)
+                    batch_loss += loss
 
-                # Backpropagation
-                #self.backward_stable(gradients, input_values)
-                self.backward_unstable(gradients, input_values, l1_lambda, l2_lambda)
+                    # Calculates the gradient of the loss in relation to the output
+                    gradients = mse_loss_derivative(target, predictions)
 
-            epoch_loss /= len(inputs)
+                    # Clip and normalize gradients
+                    gradients = clip_gradients(gradients, 10.0)
+                    #gradients = normalize_gradients(gradients)
+
+                    # Backpropagation
+                    if use_granular_update:
+                        self.backward_stable(gradients, input_values)
+                    else:
+                        self.backward_unstable(gradients, input_values, l1_lambda, l2_lambda)
+
+                    if verbose:
+                        progress_bar = '=' * (batch_count2+1) + ' ' * (batch_size - (batch_count2+1))
+                        if (batch_count2+1) < batch_size:
+                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}]", end='\r', flush=True)
+                        else:
+                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}]")
+
+                    batch_count2 += 1
+
+                batch_loss /= len(batch_inputs)
+                epoch_loss += batch_loss
+
+            epoch_loss /= (len(inputs) // batch_size)
             total_loss += epoch_loss
 
             print(f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}, LR: {self.learning_rate}")
 
-        average_loss_over_epochs = total_loss / epochs
-        return average_loss_over_epochs, self.learning_rate
+        return total_loss / epochs, self.learning_rate
 
     # Worse performance, but more stable
     def backward_stable(self, gradients, input_values):
@@ -172,9 +194,12 @@ class FeedForward:
                 grad_weight = np.outer(delta, input_values)
 
             # L1 regularization
-            grad_weight += l1_lambda * np.sign(layer["weights"])
+            if l1_lambda > 0:
+                grad_weight += l1_lambda * np.sign(layer["weights"])
+
             # L2 regularization
-            grad_weight += l2_lambda * layer["weights"]
+            if l2_lambda > 0:
+                grad_weight += l2_lambda * layer["weights"]
 
             layer["weights"] -= self.learning_rate * grad_weight
             layer["biases"] -= self.learning_rate * delta.mean(axis=0)  # Use of mean for size compatibility

@@ -31,9 +31,16 @@ def sigmoid_derivative(x):
 # where each element represents the probability of the input belonging to one of the classes. 
 # It is useful in the output layer of multi-class classification problems.
 def softmax(x):
-    exps = [math.exp(i) for i in x]
-    sum_exps = sum(exps)
-    return [j/sum_exps for j in exps]
+    max_x = np.max(x)
+    exps = np.exp(x - max_x)
+    return exps / np.sum(exps)
+
+
+# Returns the derivative of the softmax function.
+def softmax_derivative(softmax_output):
+    s = softmax_output.reshape(-1, 1)
+    jacobian_matrix = np.diagflat(s) - np.dot(s, s.T)
+    return jacobian_matrix
 
 
 # A linear function does not change the input, that is, the output is the same as the input. 
@@ -55,6 +62,8 @@ def activation_derivative(act_fn, z):
         return sigmoid_derivative(z)
     elif act_fn == "linear":
         return linear_derivative(z)
+    elif act_fn == "softmax":
+        return softmax_derivative(z)
 
 
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
@@ -83,12 +92,16 @@ def one_hot_encode(unique_elements, element):
 # The MSE measures the average of the squares of the differences between the predicted values and the actual values. 
 # It provides a simple and effective means of assessing the performance of a model.
 def mse_loss(y_true, y_pred):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
     return np.mean((y_pred - y_true) ** 2, axis=0)
 
 
 # Returns the derivative of the mse_loss function.
 def mse_loss_derivative(y_true, y_pred):
-    return 2 * (y_pred - y_true) / len(y_true)
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    return 2 * (y_pred - y_true) / y_true.size
 
 
 # Gradient clipping technique involves clipping the gradients during backpropagation to ensure they do not exceed 
@@ -117,5 +130,10 @@ def normalize_gradients(gradients):
         gradients = gradients / norm
 
     return gradients
+
+
+def create_batches(inputs, targets, batch_size):
+    for i in range(0, len(inputs), batch_size):
+        yield inputs[i:i + batch_size], targets[i:i + batch_size]
 
 

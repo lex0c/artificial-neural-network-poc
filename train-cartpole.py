@@ -24,14 +24,14 @@ target_model.summary()
 
 episodes = 500
 memory = deque(maxlen=100000)
-batch_size = 256
+batch_size = 512
 train_data = {'states': [], 'targets': []}
 
 start_epsilon = 1.0
 epsilon_min = 0.1
 epsilon = start_epsilon
-epsilon_decay = 0.995
-gamma = 0.92 # high values cause the gradient to explode
+epsilon_decay = 0.990
+gamma = 0.80 # high values cause the gradient to explode
 learning_rate = 0.001
 
 rolling_rewards = deque(maxlen=100)
@@ -98,7 +98,7 @@ def replay_experience(replay_memory):
 
 def train_model(train_data):
     if train_data['states']:
-        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate, l1_lambda=0.0001, l2_lambda=0.0001)
+        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate, batch_size=batch_size)
         train_data['states'].clear()
         train_data['targets'].clear()
         return loss

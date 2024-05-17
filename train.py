@@ -15,7 +15,7 @@ model.add_layer(num_inputs=1, num_neurons=1, act_fn='linear')
 
 model.summary()
 
-model.train(xs, ys, epochs=500, learning_rate=0.0001)
+model.train(xs, ys, epochs=500, learning_rate=0.0001, use_granular_update=True)
 
 test_loss, test_accuracy = model.evaluate(test_xs, test_ys)
 
