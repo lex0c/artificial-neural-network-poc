@@ -13,9 +13,10 @@ env = gym.make("CartPole-v1", render_mode="human")
 env.reset()
 
 
-model = FeedForward(verbose=False)
+model = FeedForward()
 model.add_layer(num_inputs=env.observation_space.shape[0], num_neurons=64, act_fn='relu')
 model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
+model.configure(loss="mse")
 model.summary()
 
 target_model = clone_model(model)

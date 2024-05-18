@@ -25,7 +25,7 @@ for e in range(episodes):
     step_count = 0
 
     while True:
-        action = np.argmax(model.predict(state))
+        action = np.argmax(model.predict(state, verbose=True))
         #action = env.action_space.sample()
 
         observation, reward, terminated, truncated, info = env.step(action)

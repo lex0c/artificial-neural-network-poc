@@ -54,16 +54,30 @@ def linear_derivative(x):
     return np.ones_like(x)
 
 
-# Add other activation functions as needed
-def activation_derivative(act_fn, z):
-    if act_fn == "relu":
+def activation_fn(fn, z):
+    if fn == "relu":
+        return relu(z)
+    elif fn == "sigmoid":
+        return sigmoid(z)
+    elif fn == "linear":
+        return linear(z)
+    elif fn == "softmax":
+        return softmax(z)
+
+    raise Exception("Invalid activation function.")
+
+
+def activation_derivative_fn(fn, z):
+    if fn == "relu":
         return relu_derivative(z)
-    elif act_fn == "sigmoid":
+    elif fn == "sigmoid":
         return sigmoid_derivative(z)
-    elif act_fn == "linear":
+    elif fn == "linear":
         return linear_derivative(z)
-    elif act_fn == "softmax":
+    elif fn == "softmax":
         return softmax_derivative(z)
+
+    raise Exception("Invalid derivative activation function.")
 
 
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
@@ -89,6 +103,23 @@ def one_hot_encode(unique_elements, element):
     return encoding
 
 
+def to_categorical(y, num_classes=None):
+    y = np.array(y, dtype='int')
+
+    if not num_classes:
+        num_classes = np.max(y) + 1
+
+    categorical = np.zeros((y.shape[0], num_classes))
+    categorical[np.arange(y.shape[0]), y] = 1
+
+    return categorical
+
+
+def to_categorical_int(y_categorical):
+    y_categorical = np.array(y_categorical)
+    return np.argmax(y_categorical, axis=1)
+
+
 # The MSE measures the average of the squares of the differences between the predicted values and the actual values. 
 # It provides a simple and effective means of assessing the performance of a model.
 def mse_loss(y_true, y_pred):
@@ -108,11 +139,17 @@ def mse_loss_derivative(y_true, y_pred):
 # The true labels in this case are integers that represent the class indices directly, and the predicted probabilities
 # are typically the output of a softmax layer which converts logits to probabilities that sum to one.
 def sparse_categorical_crossentropy(y_true, y_pred):
+    y_true = np.array(y_true, dtype=int)
+    y_pred = np.array(y_pred)
+
+    # Ensure predictions sum to 1 and are clipped to prevent log(0)
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+
     # Calculate the logarithm of the predicted probabilities
     log_probs = np.log(y_pred)
 
     # Select the log probability corresponding to the true class for each instance
-    true_log_probs = log_probs[np.arange(len(log_probs)), y_true]
+    true_log_probs = log_probs[np.arange(len(y_true)), y_true]
 
     # Calculate the average loss
     loss = -np.mean(true_log_probs)
@@ -122,6 +159,12 @@ def sparse_categorical_crossentropy(y_true, y_pred):
 
 # Returns the derivative of the sparse_categorical_crossentropy function.
 def sparse_categorical_crossentropy_derivative(y_true, y_pred):
+    y_true = np.array(y_true, dtype=int)
+    y_pred = np.array(y_pred)
+
+    # Ensure predictions sum to 1 and are clipped to prevent log(0)
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+
     # Create an array of zeros with the same shape as y_pred
     gradients = np.zeros_like(y_pred)
 
@@ -129,6 +172,44 @@ def sparse_categorical_crossentropy_derivative(y_true, y_pred):
     gradients[np.arange(len(y_true)), y_true] = -1 / y_pred[np.arange(len(y_true)), y_true]
 
     return gradients
+
+
+def categorical_crossentropy(y_true, y_pred):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)  # Clip predictions to avoid log(0)
+    return -np.sum(y_true * np.log(y_pred), axis=0)
+
+
+def categorical_crossentropy_derivative(y_true, y_pred):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)  # Clip predictions to avoid division by 0
+    return -y_true / y_pred
+
+
+def loss_fn(fn, y_true, y_pred):
+    if fn == "mse":
+        return mse_loss(y_true, y_pred)
+    elif fn == "sparse_categorical_crossentropy":
+        return sparse_categorical_crossentropy(y_true, y_pred)
+    elif fn == "categorical_crossentropy":
+        return categorical_crossentropy(y_true, y_pred)
+
+    raise Exception("Invalid loss function.")
+
+
+def loss_derivative_fn(fn, y_true, y_pred):
+    if fn == "mse":
+        return mse_loss_derivative(y_true, y_pred)
+    elif fn == "sparse_categorical_crossentropy":
+        return sparse_categorical_crossentropy_derivative(y_true, y_pred)
+    elif fn == "categorical_crossentropy":
+        return categorical_crossentropy_derivative(y_true, y_pred)
+
+    raise Exception("Invalid derivative loss function.")
 
 
 # Gradient clipping technique involves clipping the gradients during backpropagation to ensure they do not exceed 
@@ -140,9 +221,9 @@ def clip_gradients(gradients, threshold=5.0):
     # Check if clipping has taken place
     if np.any(clipped_gradients != original_gradients):
         clipping_locations = np.where(clipped_gradients != original_gradients)
-        print("Clipped indices:", clipping_locations)
-        print("Original gradients at clipped positions:", original_gradients[clipping_locations])
-        print("Clipped gradients at clipped positions:", clipped_gradients[clipping_locations])
+        #print("Clipped indices:", clipping_locations)
+        #print("Original gradients at clipped positions:", original_gradients[clipping_locations])
+        #print("Clipped gradients at clipped positions:", clipped_gradients[clipping_locations])
 
     return clipped_gradients
 

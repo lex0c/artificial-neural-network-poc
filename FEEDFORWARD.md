@@ -11,11 +11,18 @@ Create a neural network by instantiating the `FeedForward` class and adding laye
 ```python
 from feedforward import FeedForward
 
-model = FeedForward(verbose=True)
+model = FeedForward()
 model.add_layer(num_inputs=3, num_neurons=5, act_fn='relu')
 model.add_layer(num_inputs=5, num_neurons=1, act_fn='sigmoid')
+model.configure(loss='mse')
 model.summary()
 ```
+
+#### Loss Functions
+
+- **mse**: Calculates the average squared difference between the predicted values and the actual values. It penalizes larger errors more severely.
+- **sparse_categorical_crossentropy**: Computes the cross-entropy loss for each sample. It’s more memory efficient than categorical crossentropy because it does not require one-hot encoding of the labels.
+- **categorical_crossentropy**: Measures the cross-entropy loss between the true labels (one-hot encoded) and the predicted probabilities. It penalizes incorrect classifications by considering the predicted probability of the true class.
 
 ### Train the Model
 
@@ -25,7 +32,7 @@ Provide training data and target values to train the network:
 inputs = [[-1.7021547074061765], [-2.34438654901332], [-4.749754186552664], [-5.56165352474812], [9.078507501353958]]
 targets = [[-4.404309414812353], [-5.68877309802664], [-10.499508373105328], [-12.12330704949624], [17.157015002707915]]
 
-model.train(inputs, targets, epochs=100, learning_rate=0.001)
+model.train(inputs, targets, epochs=100, learning_rate=0.001, verbose=True)
 
 test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
 print(f"Test Accuracy: {test_accuracy*100:.2f}%")
@@ -60,7 +67,7 @@ model = load_model('path_to_save_model/model.joblib')
 Use the trained network to make predictions on new data:
 
 ```python
-predictions = model.predict([6.179484095266723])
+predictions = model.predict([6.179484095266723], verbose=True)
 print(predictions) # ~11.35
 ```
 

@@ -4,29 +4,18 @@ import copy
 import numpy as np
 from joblib import dump, load
 
-from etc import relu, sigmoid, softmax, linear, mse_loss_derivative, mse_loss, activation_derivative, clip_gradients, normalize_gradients, create_batches
+from etc import activation_fn, activation_derivative_fn, loss_fn, loss_derivative_fn, clip_gradients, normalize_gradients, create_batches
 
 
 def neuron(values, weights, bias, act_fn):
     # Matrix multiplication to handle batch processing
     linear_combination = np.dot(values, weights.T) + bias  # bias will be broadcast
 
-    output = 0
-
     # Pass the linear combination through the activation function
-    if act_fn == "relu":
-        output = relu(linear_combination)
-    elif act_fn == "sigmoid":
-        output = sigmoid(linear_combination)
-    elif act_fn == "softmax":
-        output = softmax(linear_combination)
-    elif act_fn == "linear":
-        output = linear(linear_combination)
-
-    return output
+    return activation_fn(act_fn, linear_combination)
 
 
-def layer(values, weights, biases, act_fn, verbose=False):
+def layer(values, weights, biases, act_fn):
     outputs = []
 
     for i in range(len(weights)):  # Iterate over each neuron
@@ -40,17 +29,18 @@ def layer(values, weights, biases, act_fn, verbose=False):
 
 
 def load_model(filepath):
-    return FeedForward(layers=load(filepath))
+    model_params = load(filepath)
+    return FeedForward(layers=model_params["layers"], configs=model_params["configs"])
 
 
 def clone_model(model):
-    return FeedForward(layers=model.get_layers())
+    return FeedForward(layers=model.get_layers(), configs=model.get_configs())
 
 
 class FeedForward:
-    def __init__(self, layers=[], verbose=False):
+    def __init__(self, layers=[], configs={}):
         self.layers = layers
-        self.verbose = verbose
+        self.configs = configs
         self.learning_rate = 0.0001
 
     def add_layer(self, num_inputs, num_neurons, act_fn):
@@ -69,12 +59,20 @@ class FeedForward:
             "output": []
         })
 
-    def forward(self, input_values):
-        values = input_values
+    def configure(self, loss):
+        self.configs["loss"] = loss
 
-        for layer_param in self.layers:
-            values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"], self.verbose)
+    def forward(self, input_values, verbose=False):
+        values = input_values
+        layer_size = len(self.layers)
+
+        for i, layer_param in enumerate(self.layers):
+            values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"])
             layer_param["output"] = values
+
+            if verbose:
+                progress_bar = '#' * (i+1) + '.' * (layer_size - (i+1))
+                print(f"> {i+1}/{layer_size} [{progress_bar}] layer step", end='\r', flush=True)
 
         return values
 
@@ -98,11 +96,11 @@ class FeedForward:
                     predictions = self.forward(input_values)
 
                     # Calculates the loss
-                    loss = mse_loss(target, predictions)
+                    loss = loss_fn(self.configs["loss"], target, predictions)
                     batch_loss += loss
 
                     # Calculates the gradient of the loss in relation to the output
-                    gradients = mse_loss_derivative(target, predictions)
+                    gradients = loss_derivative_fn(self.configs["loss"], target, predictions)
 
                     # Clip and normalize gradients
                     gradients = clip_gradients(gradients, 10.0)
@@ -115,11 +113,11 @@ class FeedForward:
                         self.backward_unstable(gradients, input_values, l1_lambda, l2_lambda)
 
                     if verbose:
-                        progress_bar = '=' * (batch_count2+1) + ' ' * (batch_size - (batch_count2+1))
+                        progress_bar = '#' * (batch_count2+1) + '.' * (batch_size - (batch_count2+1))
                         if (batch_count2+1) < batch_size:
-                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}]", end='\r', flush=True)
+                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}] - batch_loss: {loss}", end='\r', flush=True)
                         else:
-                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}]")
+                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}] - batch_loss: {loss}")
 
                     batch_count2 += 1
 
@@ -129,6 +127,7 @@ class FeedForward:
             epoch_loss /= (len(inputs) // batch_size)
             total_loss += epoch_loss
 
+            print('')
             print(f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}, LR: {self.learning_rate}")
 
         return total_loss / epochs, self.learning_rate
@@ -142,7 +141,7 @@ class FeedForward:
             # Calculates the gradient for each neuron in the layer
             for j in range(len(layer["weights"])):
                 # Derivative of the activation function
-                d_activation = activation_derivative(layer["act_fn"], layer["output"][j])
+                d_activation = activation_derivative_fn(layer["act_fn"], layer["output"][j])
 
                 # Gradient of the error in relation to the neuron's output
                 delta = gradients[j] * d_activation
@@ -182,7 +181,7 @@ class FeedForward:
             previous_output = self.layers[i-1]["output"] if i > 0 else input_values
 
             # Calculates the derivative of the activation function
-            d_activation = activation_derivative(layer["act_fn"], current_output)
+            d_activation = activation_derivative_fn(layer["act_fn"], current_output)
 
             # Gradient of the error in relation to the neuron's output
             delta = gradients * d_activation
@@ -208,8 +207,8 @@ class FeedForward:
             if i > 0:
                 gradients = np.dot(layer["weights"].T, delta)
 
-    def predict(self, input_data):
-        return self.forward(input_data)
+    def predict(self, input_data, verbose=False):
+        return self.forward(input_data, verbose)
 
     def summary(self):
         print("\n")
@@ -237,8 +236,8 @@ class FeedForward:
             print(f"    Number of Parameters: {layer_params}")
             print("--------------")
 
-        # Print the total parameters at the end
         print(f"Total Parameters: {total_params}")
+        print(f"Loss Function: {self.configs['loss']}")
         print("\n")
 
     def evaluate(self, test_inputs, test_labels):
@@ -247,10 +246,10 @@ class FeedForward:
         num_samples = len(test_inputs)
 
         for input_values, true_values in zip(test_inputs, test_labels):
-            predictions = self.predict(input_values)
+            predictions = self.forward(input_values)
 
             # Calculate loss
-            loss = mse_loss(true_values, predictions)
+            loss = loss_fn(self.configs["loss"], true_values, predictions)
             total_loss += loss
 
             # Calculate accuracy
@@ -264,11 +263,14 @@ class FeedForward:
         return loss, accuracy
 
     def save(self, filepath):
-        dump(self.layers, filepath)
+        dump({"layers": self.layers, "configs": self.configs}, filepath)
 
     def get_layers(self):
         return copy.deepcopy(self.layers)
 
     def set_layers(self, layers):
         self.layers = copy.deepcopy(layers)
+
+    def get_configs(self):
+        return copy.deepcopy(self.configs)
 
