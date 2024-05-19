@@ -115,9 +115,9 @@ class FeedForward:
                     if verbose:
                         progress_bar = '#' * (batch_count2+1) + '.' * (batch_size - (batch_count2+1))
                         if (batch_count2+1) < batch_size:
-                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}] - batch_loss: {loss}", end='\r', flush=True)
+                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}] batch step - batch_loss: {loss}", end='\r', flush=True)
                         else:
-                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}] - batch_loss: {loss}")
+                            print(f"> {batch_count2+1}/{batch_size} [{progress_bar}] batch step - batch_loss: {loss}")
 
                     batch_count2 += 1
 
@@ -127,7 +127,7 @@ class FeedForward:
             epoch_loss /= (len(inputs) // batch_size)
             total_loss += epoch_loss
 
-            print('')
+            print('')  # add an empty line to prevent flush
             print(f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}, LR: {self.learning_rate}")
 
         return total_loss / epochs, self.learning_rate
