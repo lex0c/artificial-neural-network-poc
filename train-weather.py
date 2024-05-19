@@ -34,21 +34,20 @@ def generate_weather_dataset(num_samples=10):
     return features, labels, weather_data.keys()
 
 
-features, labels, labels_raw = generate_weather_dataset(1000)
+features, labels, labels_raw = generate_weather_dataset(100)
 labels_normalized = to_categorical(labels, num_classes=len(labels_raw))
 
-test_features, test_labels, test_labels_raw = generate_weather_dataset(200)
+test_features, test_labels, test_labels_raw = generate_weather_dataset(20)
 test_labels_normalized = to_categorical(test_labels, num_classes=len(test_labels_raw))
 
 
 model = FeedForward()
 model.add_layer(num_inputs=features.shape[1], num_neurons=16, act_fn='relu')
-model.add_layer(num_inputs=16, num_neurons=16, act_fn='relu')
 model.add_layer(num_inputs=16, num_neurons=len(labels_raw), act_fn='softmax')
 model.configure(loss='categorical_crossentropy')
 model.summary()
 
-model.train(features, labels_normalized, epochs=100, learning_rate=0.0001, use_granular_update=True, verbose=True)
+model.train(features, labels_normalized, epochs=100, learning_rate=0.001, use_granular_update=True, verbose=True)
 
 test_loss, test_accuracy = model.evaluate(test_features, test_labels_normalized)
 
