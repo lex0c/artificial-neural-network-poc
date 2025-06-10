@@ -240,7 +240,7 @@ def normalize_gradients(gradients):
     return gradients
 
 
-# Spliting a dataset into smaller chunks.
+# Splitting a dataset into smaller chunks.
 def create_batches(inputs, targets, batch_size):
     for i in range(0, len(inputs), batch_size):
         yield inputs[i:i + batch_size], targets[i:i + batch_size]
