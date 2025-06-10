@@ -31,6 +31,7 @@ def layer(values, weights, biases, act_fn):
         Activation function name.
     """
 
+    single_sample = np.ndim(values) == 1
     values = np.atleast_2d(values)
 
     if act_fn == "softmax":
@@ -47,7 +48,10 @@ def layer(values, weights, biases, act_fn):
         outputs = np.stack(outputs, axis=-1)
 
     # Remove the batch dimension if a single sample was provided
-    return outputs.squeeze(0)
+    if single_sample:
+        outputs = outputs.squeeze(0)
+
+    return outputs
 
 
 def load_model(filepath):
