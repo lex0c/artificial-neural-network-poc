@@ -38,9 +38,9 @@ def clone_model(model):
 
 
 class FeedForward:
-    def __init__(self, layers=[], configs={}):
-        self.layers = layers
-        self.configs = configs
+    def __init__(self, layers=None, configs=None):
+        self.layers = list(layers) if layers is not None else []
+        self.configs = dict(configs) if configs is not None else {}
         self.learning_rate = 0.0001
 
     def add_layer(self, num_inputs, num_neurons, act_fn):
