@@ -201,7 +201,8 @@ class FeedForward:
                 grad_weight += l2_lambda * layer["weights"]
 
             layer["weights"] -= self.learning_rate * grad_weight
-            layer["biases"] -= self.learning_rate * delta.mean(axis=0)  # Use of mean for size compatibility
+            # Update each bias with its corresponding delta value
+            layer["biases"] -= self.learning_rate * delta
 
             # Prepares the gradient for the next layer (previous in the order of execution)
             if i > 0:
