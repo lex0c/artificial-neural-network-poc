@@ -31,16 +31,45 @@ def sigmoid_derivative(x):
 # where each element represents the probability of the input belonging to one of the classes. 
 # It is useful in the output layer of multi-class classification problems.
 def softmax(x):
-    max_x = np.max(x)
-    exps = np.exp(x - max_x)
-    return exps / np.sum(exps)
+    """Compute softmax for vectors or batches of vectors."""
+    x = np.array(x)
+
+    if x.ndim == 1:
+        max_x = np.max(x)
+        exps = np.exp(x - max_x)
+        return exps / np.sum(exps)
+    elif x.ndim == 2:
+        max_x = np.max(x, axis=1, keepdims=True)
+        exps = np.exp(x - max_x)
+        return exps / np.sum(exps, axis=1, keepdims=True)
+    else:
+        raise ValueError("softmax expects a 1D or 2D array")
 
 
 # Returns the derivative of the softmax function.
 def softmax_derivative(softmax_output):
-    s = softmax_output.reshape(-1, 1)
-    jacobian_matrix = np.diagflat(s) - np.dot(s, s.T)
-    return jacobian_matrix
+    """Derivative of the softmax function.
+
+    Parameters
+    ----------
+    softmax_output : np.ndarray
+        Output of the softmax function. Can be a vector ``(n,)`` or a batch
+        ``(batch_size, n)``.
+    """
+
+    s = np.array(softmax_output)
+
+    if s.ndim == 1:
+        s = s.reshape(-1, 1)
+        return np.diagflat(s) - np.dot(s, s.T)
+    elif s.ndim == 2:
+        jac = []
+        for row in s:
+            r = row.reshape(-1, 1)
+            jac.append(np.diagflat(r) - np.dot(r, r.T))
+        return np.array(jac)
+    else:
+        raise ValueError("softmax_derivative expects a 1D or 2D array")
 
 
 # A linear function does not change the input, that is, the output is the same as the input. 

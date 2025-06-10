@@ -16,14 +16,40 @@ def neuron(values, weights, bias, act_fn):
 
 
 def layer(values, weights, biases, act_fn):
-    outputs = []
+    """Compute a network layer output.
 
-    for i in range(len(weights)):  # Iterate over each neuron
-        output = neuron(values, weights[i], biases[i], act_fn)
-        outputs.append(output)
+    Parameters
+    ----------
+    values : np.ndarray
+        Input values. Can be a single sample ``(num_inputs,)`` or a batch
+        ``(batch_size, num_inputs)``.
+    weights : np.ndarray
+        Weights for the layer with shape ``(num_neurons, num_inputs)``.
+    biases : np.ndarray
+        Bias vector with shape ``(num_neurons,)``.
+    act_fn : str
+        Activation function name.
+    """
 
-    # Stack outputs to maintain batch structure
-    outputs = np.stack(outputs, axis=-1)  # shape (batch_size, num_neurons)
+    single_sample = np.ndim(values) == 1
+    values = np.atleast_2d(values)
+
+    if act_fn == "softmax":
+        # Compute logits for the entire layer at once
+        z = np.dot(values, weights.T) + biases
+        exp_z = np.exp(z - np.max(z, axis=1, keepdims=True))
+        outputs = exp_z / np.sum(exp_z, axis=1, keepdims=True)
+    else:
+        outputs = []
+        for i in range(len(weights)):
+            output = neuron(values, weights[i], biases[i], act_fn)
+            outputs.append(output)
+
+        outputs = np.stack(outputs, axis=-1)
+
+    # Remove the batch dimension if a single sample was provided
+    if single_sample:
+        outputs = outputs.squeeze(0)
 
     return outputs
 
@@ -139,12 +165,17 @@ class FeedForward:
             incoming_gradients = []
 
             # Calculates the gradient for each neuron in the layer
-            for j in range(len(layer["weights"])):
-                # Derivative of the activation function
-                d_activation = activation_derivative_fn(layer["act_fn"], layer["output"][j])
+            if layer["act_fn"] == "softmax":
+                jacobian = activation_derivative_fn("softmax", layer["output"])
+                deltas = np.dot(jacobian, gradients)
+            else:
+                deltas = []
+                for j in range(len(layer["weights"])):
+                    d_activation = activation_derivative_fn(layer["act_fn"], layer["output"][j])
+                    deltas.append(gradients[j] * d_activation)
 
-                # Gradient of the error in relation to the neuron's output
-                delta = gradients[j] * d_activation
+            for j in range(len(layer["weights"])):
+                delta = deltas[j]
 
                 # Update weights and bias
                 for k in range(len(layer["weights"][j])):
@@ -184,7 +215,10 @@ class FeedForward:
             d_activation = activation_derivative_fn(layer["act_fn"], current_output)
 
             # Gradient of the error in relation to the neuron's output
-            delta = gradients * d_activation
+            if layer["act_fn"] == "softmax":
+                delta = np.dot(d_activation, gradients)
+            else:
+                delta = gradients * d_activation
 
             # Updates weights and biases
             if i > 0:  # If it's not the first layer, it uses the output of the previous layer
