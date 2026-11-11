@@ -40,6 +40,7 @@ train_dqn(
     eval_env=eval_env,
     eval_freq=50,
     eval_episodes=10,
+    metrics_filepath='metrics/cartpole.csv',  # plotted by show-dqn-metrics.py
     checkpoint_filepath='models/cartpole-checkpoint.joblib',
 )
 

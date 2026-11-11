@@ -69,14 +69,16 @@ A [Deep Q-Network](DQN.md) learns to balance a pole on a cart
 ([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)).
 
 ```sh
-python train-cartpole.py          # trains and saves the best model to models/cartpole.joblib
-python run-cartpole.py            # watch it play (models/cartpole.joblib, or another file as argument)
-python show-cartpole-metrics.py   # plots metrics/cartpole.csv to cartpole_<run>.png
+python train-cartpole.py                                # trains and saves the best model to models/cartpole.joblib
+python run-dqn.py CartPole-v1 models/cartpole.joblib    # watch it play
+python show-dqn-metrics.py metrics/cartpole.csv         # plots the training metrics to cartpole_<run>.png
 ```
 
 `finetune-cartpole.py` continues training `models/cartpole.joblib` with less exploration, and saves the best model to
-`models/cartpole-checkpoint.joblib` (watch it with `python run-cartpole.py models/cartpole-checkpoint.joblib`) and
-the last one to `models/cartpole-finetuned.joblib`.
+`models/cartpole-checkpoint.joblib` and the last one to `models/cartpole-finetuned.joblib`.
+
+The DQN code (`dqn.py`, `run-dqn.py` and `show-dqn-metrics.py`) isn't tied to CartPole: it works with other Gymnasium
+environments with discrete actions, as DQN.md explains.
 
 The training scripts have two settings at the top: `SEED`, to make a run reproducible, and, for CartPole, `RENDER`,
 to watch the training (much slower).

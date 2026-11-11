@@ -81,6 +81,11 @@ class ReplayExperienceTest(unittest.TestCase):
 
 class LearnFromMemoryTest(unittest.TestCase):
     def test_only_the_action_taken_has_an_error(self):
+        for minibatch_size in (1, 4):
+            with self.subTest(minibatch_size=minibatch_size):
+                self.check_steps(minibatch_size)
+
+    def check_steps(self, minibatch_size):
         np.random.seed(0)
         random.seed(0)
         model = FeedForward()
@@ -99,13 +104,15 @@ class LearnFromMemoryTest(unittest.TestCase):
             return train_step(inputs, targets, *args)
 
         model.train_step = checked_train_step
-        learn_from_memory(memory, model, target_model, batch_size=10, gamma=0.9, learning_rate=0.1, l1_lambda=0.0, l2_lambda=0.0, double_dqn=False)
+        learn_from_memory(memory, model, target_model, batch_size=12, gamma=0.9, learning_rate=0.1, l1_lambda=0.0, l2_lambda=0.0, double_dqn=False, minibatch_size=minibatch_size)
 
-        self.assertEqual(len(steps), 10)  # one step per sampled transition
+        self.assertEqual(len(steps), 12 // minibatch_size)  # one step per minibatch
+        self.assertEqual([len(targets) for targets, _ in steps], [minibatch_size] * (12 // minibatch_size))
 
         for targets, predictions in steps:
-            differences = np.flatnonzero(targets[0] != predictions[0])
-            self.assertLessEqual(len(differences), 1)  # only the action taken (unless its prediction is already right)
+            for row_targets, row_predictions in zip(targets, predictions):
+                differences = np.flatnonzero(row_targets != row_predictions)
+                self.assertLessEqual(len(differences), 1)  # only the action taken (unless its prediction is already right)
 
 
 class ScriptedEnv:

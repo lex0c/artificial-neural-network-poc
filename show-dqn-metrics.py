@@ -1,11 +1,23 @@
+import os
+import sys
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
 
-# Plots the metrics that train-cartpole.py and finetune-cartpole.py write to metrics/cartpole.csv, one figure per
-# training run (metrics_key), saved as cartpole_<metrics_key>.png. DQN.md explains how to read them.
+# Plots the metrics that train_dqn writes to a CSV file (metrics_filepath), one figure per training run (metrics_key),
+# saved as <file name>_<metrics_key>.png. DQN.md explains how to read them.
+#
+#   python show-dqn-metrics.py metrics/cartpole.csv
+#   python show-dqn-metrics.py metrics/acrobot.csv
 
-data = pd.read_csv('metrics/cartpole.csv')
+if len(sys.argv) < 2:
+    sys.exit("usage: python show-dqn-metrics.py <metrics file>")
+
+metrics_filepath = sys.argv[1]
+name = os.path.splitext(os.path.basename(metrics_filepath))[0]  # e.g. cartpole
+
+data = pd.read_csv(metrics_filepath)
 unique_keys = data['metrics_key'].unique()
 
 plt.style.use('ggplot')
@@ -16,7 +28,7 @@ for key in unique_keys:
 
     # Create a figure and a set of subplots
     fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(18, 15))
-    fig.suptitle(f'Cart Pole - {key}', fontsize=16)
+    fig.suptitle(f'{name} - {key}', fontsize=16)
 
     # Total reward per episode
     axs[0, 0].plot(session_data['episode'], session_data['total_reward'], marker='o', linestyle='-', color='b')
@@ -77,6 +89,6 @@ for key in unique_keys:
         axs[2, 2].set_ylabel('Mean Max Q')
 
     plt.tight_layout(pad=3.0)
-    plt.savefig(f'cartpole_{key}.png', dpi=300)
+    plt.savefig(f'{name}_{key}.png', dpi=300)
     plt.close(fig)
 

@@ -87,20 +87,20 @@ def replay_experience(memory, model, target_model, batch_size, gamma, double_dqn
 
 
 # Fits the model to the Bellman targets of a random batch of transitions from the replay memory, with one gradient
-# descent step per transition.
+# descent step per minibatch of minibatch_size transitions (batch_size / minibatch_size steps).
 #
 # The model has one output per action, but a transition only says something about the action that was taken. So the
 # target of each step is the current prediction of the model, made right before the step, with the Bellman target in
-# place of the action taken: the other outputs have no error and only the Q-value of the action taken is trained.
+# place of the action taken: the other outputs have no error and only the Q-values of the actions taken are trained.
 # The Bellman targets can be computed once for the whole batch, because the target model doesn't change during it.
 #
-# This project learns once per episode, with one step per sampled transition. The original DQN instead does one
-# minibatch update after every step of the environment.
+# This project learns once per episode. The original DQN instead does one minibatch update after every step of the
+# environment.
 #
 # Returns the mean loss of the steps and the mean of the highest Q-value of the sampled states (None while the memory
 # is too small). The mean Q-value should level off near the discounted return the agent gets, always below
 # 1 / (1 - gamma) with a reward of 1 per step; values beyond it mean the Q-values are overestimated.
-def learn_from_memory(memory, model, target_model, batch_size, gamma, learning_rate, l1_lambda, l2_lambda, double_dqn):
+def learn_from_memory(memory, model, target_model, batch_size, gamma, learning_rate, l1_lambda, l2_lambda, double_dqn, minibatch_size=1):
     training_data = replay_experience(memory, model, target_model, batch_size, gamma, double_dqn)
 
     if training_data is None:
@@ -110,13 +110,14 @@ def learn_from_memory(memory, model, target_model, batch_size, gamma, learning_r
     mean_q = float(np.mean(np.max(model.predict(states), axis=1)))
     losses = []
 
-    for state, action, target_q in zip(states, actions, target_q_values):
-        state = model.normalize(state.reshape(1, -1))  # train_step expects normalized inputs, as train() gives it
+    for start in range(0, len(states), minibatch_size):
+        minibatch = slice(start, start + minibatch_size)
+        minibatch_states = model.normalize(states[minibatch])  # train_step expects normalized inputs, as train() gives
 
-        targets = model.forward_layers(state).copy()   # the current prediction for every action...
-        targets[0, action] = target_q                 # ...with the Bellman target for the action taken
+        targets = model.forward_layers(minibatch_states).copy()  # the current prediction for every action...
+        targets[np.arange(len(minibatch_states)), actions[minibatch]] = target_q_values[minibatch]  # ...but the action taken
 
-        losses.append(model.train_step(state, targets, learning_rate, l1_lambda, l2_lambda))
+        losses.append(model.train_step(minibatch_states, targets, learning_rate, l1_lambda, l2_lambda))
 
     return float(np.mean(losses)), mean_q
 
@@ -166,7 +167,8 @@ def write_to_csv(filepath, metric):
 
 # Trains a DQN agent, updating the model in place. Each episode:
 #   1. act: play an episode with the epsilon-greedy policy, storing the transitions in the replay memory
-#   2. learn: fit the model to the Bellman targets of a random batch from the memory
+#   2. learn: fit the model to the Bellman targets of a random batch of batch_size transitions from the memory, with
+#      one gradient descent step per minibatch of minibatch_size transitions
 #   3. evaluate: every eval_freq episodes, play eval_episodes with the greedy policy in eval_env (a separate
 #      environment, so the training one isn't disturbed), and save the checkpoint when it is the best so far
 #   4. schedules: explore less (epsilon) and, optionally, lower the learning rate
@@ -174,15 +176,19 @@ def write_to_csv(filepath, metric):
 #
 # The checkpoint keeps the model with the best greedy evaluation, starting with the initial model (evaluated before the
 # training): a DQN policy often gets worse after reaching its best, so the last model isn't necessarily the best one.
+# With metrics_filepath, every episode adds a row of metrics to that CSV file (see show-dqn-metrics.py).
+#
+# It works with any Gymnasium environment whose actions are discrete (one Q-value per action) and whose state is a
+# vector of numbers.
 #
 # Returns the total reward of each episode.
 def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_rate,
               epsilon=1.0, epsilon_min=0.1, epsilon_decay=1.0,
               learning_rate_decay=1.0, learning_rate_decay_freq=300,
               l1_lambda=0.0, l2_lambda=0.0,
-              target_update_freq=10, double_dqn=False, memory_size=100000,
+              target_update_freq=10, double_dqn=False, memory_size=100000, minibatch_size=1,
               eval_env=None, eval_freq=50, eval_episodes=10,
-              checkpoint_filepath=None, metrics_filepath='metrics/cartpole.csv'):
+              checkpoint_filepath=None, metrics_filepath=None):
     if checkpoint_filepath and eval_env is None:
         raise ValueError("checkpoint_filepath needs eval_env: the checkpoint is the model with the best greedy evaluation")
 
@@ -210,7 +216,7 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
         average_rolling_reward = sum(rolling_rewards) / len(rolling_rewards)
 
         # 2. Learn
-        loss, mean_q = learn_from_memory(memory, model, target_model, batch_size, gamma, learning_rate, l1_lambda, l2_lambda, double_dqn)
+        loss, mean_q = learn_from_memory(memory, model, target_model, batch_size, gamma, learning_rate, l1_lambda, l2_lambda, double_dqn, minibatch_size)
 
         # 3. Evaluate
         greedy_reward = None
@@ -224,19 +230,20 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
                 if checkpoint_filepath:
                     model.save(checkpoint_filepath)
 
-        write_to_csv(metrics_filepath, {
-            'metrics_key': metrics_key,
-            'episode': e+1,
-            'total_reward': total_reward,
-            'average_rolling_reward': average_rolling_reward,
-            'greedy_reward': greedy_reward,
-            'mean_q': mean_q,
-            'loss': loss,
-            'duration': episode_duration,
-            'epsilon': epsilon,
-            'steps': steps,
-            'learning_rate': learning_rate
-        })
+        if metrics_filepath:
+            write_to_csv(metrics_filepath, {
+                'metrics_key': metrics_key,
+                'episode': e+1,
+                'total_reward': total_reward,
+                'average_rolling_reward': average_rolling_reward,
+                'greedy_reward': greedy_reward,
+                'mean_q': mean_q,
+                'loss': loss,
+                'duration': episode_duration,
+                'epsilon': epsilon,
+                'steps': steps,
+                'learning_rate': learning_rate
+            })
 
         print(f"episode: {e+1}/{episodes} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - epsilon: {epsilon:.3f} - steps: {steps}")
 

@@ -101,9 +101,9 @@ target model evaluates it.
 
 ### Simplifications in this project
 
-- **When it learns.** This project learns once per episode: it samples 512 transitions and takes one gradient descent
-  step per transition (`model.train_step`). The original DQN makes one minibatch update after every step of the
-  environment.
+- **When it learns.** This project learns once per episode: it samples `batch_size` transitions and takes one gradient
+  descent step per minibatch of `minibatch_size` of them (`model.train_step`). CartPole uses 512 transitions and
+  minibatches of 1. The original DQN makes one minibatch update after every step of the environment.
 - **Optimizer and loss.** Plain gradient descent with the mean squared error, with the error clipped to `[-10, 10]`
   (`clip_gradients`; with one transition per update, `dL/dq` is the error itself). The original DQN used RMSProp and
   clipped the error to `[-1, 1]`, which behaves like the Huber loss.
@@ -120,7 +120,8 @@ starting with the model before the training: `train-cartpole.py` saves it to `mo
 
 ## Reading the metrics
 
-Each episode adds a row to `metrics/cartpole.csv`, and `show-cartpole-metrics.py` plots them:
+With `metrics_filepath` (`metrics/cartpole.csv` in `train-cartpole.py`), each episode adds a row of metrics to that
+file, and `python show-dqn-metrics.py metrics/cartpole.csv` plots them:
 
 - **total_reward**: the reward of the training episode, with exploration. Noisy.
 - **average_rolling_reward**: the mean over the last 100 episodes. Smooth, but it hides drops of the policy.
@@ -146,6 +147,41 @@ These are the results of `train-cartpole.py` over 9 seeds:
 - Within 500 episodes, `gamma = 0.8` learned the best (447 on average over 6 seeds). Higher values look further ahead,
   but their Q-values take longer to grow and the reward stayed lower: about 315 to 350 with 0.9, 330 to 365 with
   0.95, and 250 to 270 with 0.99. Double DQN didn't help at `gamma = 0.8` (419).
+
+## Other environments
+
+`train_dqn` isn't tied to CartPole: it works with any Gymnasium environment whose actions are discrete (one Q-value per
+action) and whose state is a vector of numbers. The Q-network needs one input per number of the state and one linear
+output per action:
+
+```python
+env, eval_env = gym.make("Acrobot-v1"), gym.make("Acrobot-v1")
+
+model = FeedForward()
+model.add_layer(num_inputs=env.observation_space.shape[0], num_neurons=64, act_fn='relu')
+model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
+model.configure(loss="mse")
+model.fit_normalization([env.observation_space.low, env.observation_space.high])  # when the state has known limits
+
+train_dqn(env, model, clone_model(model), episodes=300, batch_size=4096, minibatch_size=64, gamma=0.99,
+          learning_rate=0.05, epsilon_decay=0.97, epsilon_min=0.05, target_update_freq=1,
+          eval_env=eval_env, eval_freq=25, checkpoint_filepath='models/acrobot.joblib')
+```
+
+Then `python run-dqn.py Acrobot-v1 models/acrobot.joblib` shows it playing. The hyperparameters of CartPole don't
+carry over: every environment needs its own. Acrobot (a two-link arm that has to swing its tip above a line, with a
+reward of -1 per step, up to 500 steps) shows why:
+
+- Reaching the goal takes about 100 steps, so it needs `gamma = 0.99`, which looks about 100 steps ahead.
+- With that horizon, the information about the goal has to travel back over many steps, one target-model copy at a
+  time, so the target model has to be refreshed after every episode (`target_update_freq=1`).
+- Single-transition steps were too noisy to learn: minibatches of 64 transitions made the difference.
+
+With the settings above, the best greedy evaluation reached about -100 (close to the -100 usually considered solved)
+in about half of the runs. The others stayed far from it, and two of nine never left -500. A random policy reaches the goal in only about
+3% of the episodes, so a run that doesn't find it early has nothing to learn from: the Q-values of every state stay
+alike. This is the classic weakness of epsilon-greedy exploration when rewards are rare, and why harder environments
+such as MountainCar, whose goal a random policy practically never reaches, need better exploration methods.
 
 ## Things to try
 
