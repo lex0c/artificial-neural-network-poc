@@ -12,6 +12,17 @@ pip install -r requirements.txt
 python -m unittest -v   # optional: checks that everything works
 ```
 
+LunarLander (example 4) also needs [Box2D](https://gymnasium.farama.org/environments/box2d/), compiled with SWIG. On
+Python 3.14, in the activated virtual environment:
+
+```sh
+pip install swig setuptools
+pip install --no-build-isolation box2d-py==2.3.8
+```
+
+On Python 3.13 or older, Gymnasium installs another Box2D package with `pip install "gymnasium[box2d]"` (not tested
+here).
+
 ## Reading order
 
 1. **[FEEDFORWARD.md](FEEDFORWARD.md)**: how a network computes and learns (forward pass, loss, backpropagation,
@@ -27,8 +38,9 @@ python -m unittest -v   # optional: checks that everything works
    - [DQN.md](DQN.md) and `dqn.py`: a Deep Q-Network, which learns the value of each action.
    - [PPO.md](PPO.md) and `ppo.py`: Proximal Policy Optimization, which learns the policy directly.
    - `rl.py`: the evaluation and metrics shared by both.
-5. **The dashboard** (optional): `monitor.py` keeps a picture of the models while they train or run, `dashboard.py`
-   serves it to the browser, and `dashboard.html` draws it (see "Watching a model live" below).
+5. **Watching** (optional): `monitor.py` keeps a picture of the models while they train or run, `dashboard.py`
+   serves it to the browser, and `dashboard.html` draws it (see "Watching a model live" below). `viewer.py` shows an
+   agent playing in a window while it trains (`--watch`).
 6. **The tests**: `test_feedforward.py` checks backpropagation against gradients measured numerically,
    `test_dqn.py` computes DQN and Double DQN targets on a tiny example you can follow by hand, and `test_ppo.py`
    checks the PPO gradient numerically and computes advantages by hand.
@@ -69,7 +81,7 @@ python train-mnist.py   # trains and saves models/mnist.joblib (about 15 seconds
 python run-mnist.py     # per-digit report, confusion matrix, and the first mistakes in mnist-errors.png
 ```
 
-### 4. Reinforcement learning: CartPole and Acrobot
+### 4. Reinforcement learning: CartPole, Acrobot and LunarLander
 
 Two agents learn to balance a pole on a cart ([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)):
 a [Deep Q-Network](DQN.md), which learns the value of each action, and [PPO](PPO.md), which learns the policy directly.
@@ -95,9 +107,24 @@ python run-agent.py Acrobot-v1 models/acrobot-ppo.joblib
 python show-metrics.py metrics/acrobot-ppo.csv
 ```
 
+And it lands a spacecraft in [LunarLander](https://gymnasium.farama.org/environments/box2d/lunar_lander/), which needs
+Box2D (see Setup). The lander has to touch down gently between two flags, firing its main engine or one of its two
+side engines, and 200 points count as solved. Over 9 seeds, every run solves it in about 4 minutes, and the saved
+policies score 272 on average on 100 new episodes, and 200 or more in 99% of them.
+
+```sh
+python train-lunarlander-ppo.py --watch                          # about 4 minutes: saves models/lunarlander-ppo.joblib
+python run-agent.py LunarLander-v3 models/lunarlander-ppo.joblib
+python show-metrics.py metrics/lunarlander-ppo.csv
+```
+
+`--watch` opens a window where the newest policy plays while it trains, without slowing the training: a separate
+process plays one episode after the other, each with the weights of the last iteration (`viewer.py`). Rendering the
+training itself (`--render` in the other scripts) would hold it to the 50 steps per second of the animation.
+
 Every script can be run from any directory, and `--help` shows its options. The training scripts take `--seed` to
 make a run reproducible, `--epochs`, `--episodes` or `--steps` to change the length of the training, and, for the
-environments that can be shown, `--render` to watch the training (much slower):
+environments that can be shown, `--render` to watch the training (much slower) or, for LunarLander, `--watch`:
 
 ```sh
 python train-cartpole.py --seed 0 --episodes 300

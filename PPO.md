@@ -2,7 +2,8 @@
 
 `ppo.py` trains an agent with PPO (Schulman et al. 2017). Where [DQN](DQN.md) learns the value of each action and then
 takes the best one, PPO learns the **policy** directly: the probability of each action in each state. This page
-explains the ideas and how the training loop works, using the same CartPole and Acrobot environments as DQN.md.
+explains the ideas and how the training loop works, using the same CartPole and Acrobot environments as DQN.md, and
+LunarLander.
 
 ## Two networks: the policy and the critic
 
@@ -102,6 +103,10 @@ DQN, which keeps a replay memory and reuses old steps many times. The advantages
 - One environment at a time. Common implementations play several copies of the environment in parallel.
 - None of the common extras: no clipping of the gradient norm, no clipping of the value updates, no decreasing
   learning rate and no early stop when the policy changes too much.
+- A decreasing learning rate was measured on LunarLander, over 9 seeds: falling linearly to 0, it halved the
+  oscillation of the training reward at the end, but the policies scored the same, about 270 on 100 new episodes with
+  either schedule, because the checkpoint already keeps the best policy. In one run, the smaller steps also made the
+  policy take about 200 iterations to recover from a relapse. A steadier curve isn't a better agent.
 
 ## Hyperparameters
 
@@ -116,8 +121,9 @@ DQN, which keeps a replay memory and reuses old steps many times. The advantages
 | `clip_range` | 0.2 | how far the ratio can usefully move in one iteration |
 | `entropy_coef` | 0.01 | bonus for keeping some randomness |
 
-These are the usual defaults of PPO, and the same values work for both environments, which is one of the strengths of
-PPO: DQN needed different hyperparameters for each one.
+These are the usual defaults of PPO, and the same values work for CartPole and Acrobot, which is one of the strengths
+of PPO: DQN needed different hyperparameters for each one. LunarLander changes only the horizon, with `gamma=0.999` and
+`gae_lambda=0.98`: the +100 of a landing comes hundreds of steps after the decisions that lead to it.
 
 ## Reading the metrics
 
@@ -142,6 +148,10 @@ Over 9 seeds:
 - **Acrobot** (`train-acrobot-ppo.py`, 300,000 steps, about 2 minutes): every run learns. The saved policies average
   -85.5 (all between -78 and -105) and the last ones -86, close to the -100 usually considered solved, and they stay
   stable after learning. The training reward passed -150 between 50,000 and 180,000 steps.
+- **LunarLander** (`train-lunarlander-ppo.py`, 1,000,000 steps, about 4 minutes): every run solves it. The greedy
+  evaluation passed 200 between 120,000 and 310,000 steps. On 100 episodes the training never evaluated, the saved
+  policies average 272 (between 254 and 283) and score 200 or more in 99% of them; the last policies average 270, with
+  97%. A few episodes still end in a crash.
 - **Without the entropy bonus** (`entropy_coef=0`), 7 of the 9 Acrobot runs learned: one never left -500, and one was
   still improving at the end. With nothing found yet, the advantages are only noise, and the policy can become
   deterministic before it finds the goal.
@@ -188,5 +198,6 @@ steps pays off when each step of the environment is expensive.
 
 - `entropy_coef=0` on Acrobot, and compare the entropy curves of the runs that learn and the ones that don't.
 - `gae_lambda=0` (only the one-step estimate) and `gae_lambda=1` (only the real rewards).
+- `gamma=0.99` on LunarLander: a shorter horizon than the landing needs.
 - A larger `clip_range` (e.g. 0.5) and watch `clip_fraction` and the stability of the rewards.
 - MountainCar, whose goal a random policy practically never reaches: PPO's exploration isn't enough there either.
