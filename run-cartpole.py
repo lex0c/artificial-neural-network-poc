@@ -1,47 +1,35 @@
-import numpy as np
+import sys
+
 import gymnasium as gym
-import random
-import time
+import numpy as np
+
 from feedforward import load_model
 
 
-model = load_model('models/cartpole-checkpoint.joblib')
+# Watches a trained agent play CartPole with the greedy policy (always the action with the highest Q-value).
+#
+#   python run-cartpole.py                                    # the model saved by train-cartpole.py
+#   python run-cartpole.py models/cartpole-checkpoint.joblib  # the model saved by finetune-cartpole.py
+
+model_filepath = sys.argv[1] if len(sys.argv) > 1 else 'models/cartpole.joblib'
+model = load_model(model_filepath)
 model.summary()
 
 env = gym.make("CartPole-v1", render_mode="human")
-env.reset()
-
 episodes = 30
-epsilon = -1
-
 
 for e in range(episodes):
-    start_time = time.time()
-
     state, _ = env.reset()
-    state = np.reshape(state, [1, env.observation_space.shape[0]])
-    done = False
     total_reward = 0
-    step_count = 0
 
     while True:
-        action = np.argmax(model.predict(state, verbose=True))
-        #action = env.action_space.sample()
-
-        observation, reward, terminated, truncated, info = env.step(action)
-        next_state = np.reshape(observation, [1, env.observation_space.shape[0]])
-        done = terminated or truncated
-
-        state = next_state
+        q_values = model.predict(state.reshape(1, -1))
+        state, reward, terminated, truncated, _ = env.step(int(np.argmax(q_values)))
         total_reward += reward
-        step_count += 1
 
-        if done:
-            end_time = time.time()
-            episode_duration = end_time - start_time
-            print(f"episode: {e+1}/{episodes} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - steps: {step_count}")
+        if terminated or truncated:
             break
 
+    print(f"episode: {e+1}/{episodes} - reward: {total_reward:.0f}")
 
 env.close()
-

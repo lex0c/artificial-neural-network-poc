@@ -7,11 +7,10 @@ from contextlib import redirect_stdout
 import numpy as np
 from joblib import load
 
+from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax
+from data import set_seed, to_categorical
 from feedforward import FeedForward, load_model, clone_model
-from etc import (
-    loss_fn, loss_derivative_fn, softmax_crossentropy_delta, to_categorical, set_seed,
-    softmax, sigmoid, sigmoid_derivative, relu, relu_derivative,
-)
+from losses import loss_derivative_fn, loss_fn, softmax_crossentropy_delta
 
 
 NUM_SAMPLES = 5
@@ -181,18 +180,18 @@ class FeedForwardTest(unittest.TestCase):
         targets = rng.normal(0, 1, (10, NUM_OUTPUTS))
 
         with redirect_stdout(io.StringIO()):
-            epoch_loss, _ = model.train(inputs, targets, epochs=1, learning_rate=0.0, batch_size=4)
+            history = model.train(inputs, targets, epochs=1, learning_rate=0.0, batch_size=4)
 
-        self.assertAlmostEqual(epoch_loss, loss_fn("mse", targets, model.forward(inputs)))
+        self.assertAlmostEqual(history["loss"][0], loss_fn("mse", targets, model.forward(inputs)))
 
     def test_train_with_fewer_samples_than_batch_size(self):
         np.random.seed(0)
         model = build_model("relu", "linear", "mse")
 
         with redirect_stdout(io.StringIO()):
-            epoch_loss, _ = model.train(np.ones((3, NUM_INPUTS)), np.zeros((3, NUM_OUTPUTS)), epochs=1, learning_rate=0.01, batch_size=32)
+            history = model.train(np.ones((3, NUM_INPUTS)), np.zeros((3, NUM_OUTPUTS)), epochs=1, learning_rate=0.01, batch_size=32)
 
-        self.assertTrue(np.isfinite(epoch_loss))
+        self.assertTrue(np.isfinite(history["loss"][0]))
 
     def test_sparse_and_one_hot_labels_evaluate_the_same(self):
         np.random.seed(0)
@@ -223,15 +222,36 @@ class TrainingStepTest(unittest.TestCase):
         chunked = build_model("relu", "linear", "mse")
 
         with redirect_stdout(io.StringIO()):
-            whole.train(inputs, targets, epochs=1, learning_rate=0.1, batch_size=4)
+            whole.train(inputs, targets, epochs=1, learning_rate=0.1, batch_size=4, shuffle=False)
 
             for start in (0, 4, 8):
                 chunk = slice(start, start + 4)
-                chunked.train(inputs[chunk], targets[chunk], epochs=1, learning_rate=0.1, batch_size=4)
+                chunked.train(inputs[chunk], targets[chunk], epochs=1, learning_rate=0.1, batch_size=4, shuffle=False)
 
         for whole_layer, chunked_layer in zip(whole.layers, chunked.layers):
             np.testing.assert_allclose(whole_layer["weights"], chunked_layer["weights"], rtol=1e-12)
             np.testing.assert_allclose(whole_layer["biases"], chunked_layer["biases"], rtol=1e-12)
+
+    def test_each_epoch_trains_on_a_random_order_of_the_samples(self):
+        rng = np.random.default_rng(9)
+        inputs = rng.normal(0, 1, (10, NUM_INPUTS))
+        targets = rng.normal(0, 1, (10, NUM_OUTPUTS))
+
+        np.random.seed(0)
+        shuffled = build_model("relu", "linear", "mse")
+        np.random.seed(0)
+        permuted = build_model("relu", "linear", "mse")
+
+        with redirect_stdout(io.StringIO()):
+            np.random.seed(1)
+            shuffled.train(inputs, targets, epochs=1, learning_rate=0.1, batch_size=4)
+
+            np.random.seed(1)
+            order = np.random.permutation(10)
+            permuted.train(inputs[order], targets[order], epochs=1, learning_rate=0.1, batch_size=4, shuffle=False)
+
+        for shuffled_layer, permuted_layer in zip(shuffled.layers, permuted.layers):
+            np.testing.assert_allclose(shuffled_layer["weights"], permuted_layer["weights"], rtol=1e-12)
 
     def test_loss_gradient_is_clipped(self):
         # One linear neuron starting at w=0, b=0 and one sample x=3, target=1000:

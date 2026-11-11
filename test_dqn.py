@@ -169,16 +169,11 @@ class TrainDQNTest(DQNTrainingCase):
         np.testing.assert_allclose([float(row["epsilon"]) for row in metrics], [1.0, 0.5, 0.25, 0.2, 0.2])
         np.testing.assert_allclose([float(row["learning_rate"]) for row in metrics], [0.1, 0.05, 0.05, 0.025, 0.025])
 
-    def test_checkpoint_is_saved_when_the_rolling_average_improves(self):
-        save = mock.Mock(wraps=self.model.save)
-        self.model.save = save
+    def test_checkpoint_needs_greedy_evaluations(self):
         checkpoint = os.path.join(self.directory.name, "checkpoint.joblib")
 
-        # Rolling averages 2, 1.5 and 2.33: improves in the first and third episodes
-        self.train(ScriptedEnv([(2, "terminated"), (1, "terminated"), (4, "terminated")]), checkpoint_filepath=checkpoint)
-
-        self.assertEqual(save.call_args_list, [mock.call(checkpoint)] * 2)
-        self.assertTrue(os.path.exists(checkpoint))
+        with self.assertRaises(ValueError):
+            self.train(ScriptedEnv([(2, "terminated")]), checkpoint_filepath=checkpoint)
 
 
 class CountingEnv:

@@ -1,47 +1,21 @@
-import random
 import numpy as np
-from sklearn.metrics import confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
 
 from feedforward import load_model
-from etc import to_categorical
+from weather import CLASS_NAMES, generate_weather_dataset
 
+
+# Evaluates the model saved by train-weather.py on new data: prints the precision, recall and F1 of each class and
+# saves the confusion matrix to confusion-matrix.png.
 
 model = load_model('models/weather.joblib')
 model.summary()
 
 
-def generate_weather_dataset(num_samples=10):
-    weather_data = {
-        'Sunny': {'temp': (20, 35), 'humidity': (10, 50), 'wind': (0, 20)},
-        'Cloudy': {'temp': (10, 20), 'humidity': (50, 90), 'wind': (0, 10)},
-        'Rainy': {'temp': (5, 15), 'humidity': (80, 100), 'wind': (10, 25)},
-        'Snowy': {'temp': (-5, 0), 'humidity': (50, 100), 'wind': (5, 15)}
-    }
-
-    features = []
-    labels = []
-
-    # Define label indices
-    label_indices = {label: idx for idx, label in enumerate(weather_data.keys())}
-
-    # Generate samples
-    for label, ranges in weather_data.items():
-        for _ in range(num_samples):
-            temp = np.random.uniform(*ranges['temp'])
-            humidity = np.random.uniform(*ranges['humidity'])
-            wind = np.random.uniform(*ranges['wind'])
-
-            features.append([temp, humidity, wind])
-            labels.append(label_indices[label])
-
-    # Convert to numpy arrays
-    features = np.array(features)
-
-    return features, labels, weather_data.keys()
-
-
+# Confusion matrix: the rows are the true conditions and the columns the predicted ones, so the diagonal counts the
+# correct predictions and every other cell shows which conditions get confused
 def plot_confusion_matrix(cm, class_names):
     plt.figure(figsize=(10, 7))
     sns.heatmap(cm, annot=True, fmt="d", cmap='Blues', xticklabels=class_names, yticklabels=class_names)
@@ -49,21 +23,13 @@ def plot_confusion_matrix(cm, class_names):
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.savefig('confusion-matrix.png', dpi=300)
-    #plt.show()
 
 
-test_features, test_labels, test_labels_raw = generate_weather_dataset(100)
-test_labels_normalized = to_categorical(test_labels, num_classes=len(test_labels_raw))
+test_features, test_labels = generate_weather_dataset(100)
+predicted_labels = np.argmax(model.predict(test_features), axis=1)  # the class with the highest probability
 
+plot_confusion_matrix(confusion_matrix(test_labels, predicted_labels), CLASS_NAMES)
 
-predictions = model.predict(test_features, verbose=True)
-predicted_labels = np.argmax(predictions, axis=1)
-
-cm = confusion_matrix(test_labels, predicted_labels)
-
-class_names = list(test_labels_raw)
-plot_confusion_matrix(cm, class_names)
-
-# Precision, recall and F1 of each class (accuracy alone hides which classes get confused)
-print(classification_report(test_labels, predicted_labels, target_names=class_names, digits=3))
-
+# Precision: of the samples predicted as a class, how many really are. Recall: of the samples of a class, how many
+# were found. F1 combines both. Accuracy alone hides which classes get confused.
+print(classification_report(test_labels, predicted_labels, target_names=CLASS_NAMES, digits=3))

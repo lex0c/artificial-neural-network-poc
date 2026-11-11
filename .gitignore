@@ -1,4 +1,6 @@
 __pycache__/
 pocenv
-logfile.txt
 
+# Outputs of the scripts
+*.png
+metrics/*.csv

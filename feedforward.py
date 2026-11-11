@@ -1,146 +1,139 @@
-import math
-import random
 import copy
+import math
+
 import numpy as np
 from joblib import dump, load
 
-from etc import activation_fn, activation_backward, loss_fn, loss_derivative_fn, clip_gradients, normalize_gradients, create_batches, softmax_crossentropy_delta, is_softmax_crossentropy, minmax_stats, apply_minmax
+from activations import ACTIVATIONS, activation_fn, activation_backward
+from data import apply_minmax, create_batches, minmax_stats
+from losses import (
+    check_loss, clip_gradients, is_softmax_crossentropy, loss_derivative_fn, loss_fn, softmax_crossentropy_delta,
+)
 
 
-def layer(values, weights, biases, act_fn):
-    # Linear combination of every neuron at once (each row of weights is one neuron):
-    # (batch_size, num_inputs) x (num_inputs, num_neurons) -> (batch_size, num_neurons)
-    # A single sample with shape (num_inputs,) gives shape (num_neurons,).
-    z = np.dot(values, weights.T) + biases  # biases will be broadcast over the batch
-
-    # The activation function sees the whole layer, so softmax can normalize across the neurons of each sample
+# A dense (fully connected) layer: each neuron j computes a weighted sum of all the inputs plus its bias,
+#   z[j] = sum over k of weights[j, k] * inputs[k] + biases[j]
+# and passes it through the activation function: output[j] = f(z[j]).
+#
+# For a batch this is a single matrix product: (batch_size, num_inputs) x (num_inputs, num_neurons). A single sample
+# with shape (num_inputs,) gives shape (num_neurons,).
+def layer_forward(inputs, weights, biases, act_fn):
+    z = np.dot(inputs, weights.T) + biases  # the biases are added to every sample of the batch
     return z, activation_fn(act_fn, z)
 
 
 def load_model(filepath):
     model_params = load(filepath)
-    return FeedForward(layers=model_params["layers"], configs=model_params["configs"])
+    layers = [{"weights": l["weights"], "biases": l["biases"], "act_fn": l["act_fn"]} for l in model_params["layers"]]
+    return FeedForward(layers=layers, configs=model_params["configs"])
 
 
 def clone_model(model):
     return FeedForward(layers=model.get_layers(), configs=model.get_configs())
 
 
+# A feedforward neural network: a stack of dense layers, where the output of each layer is the input of the next.
+#
+# It learns with gradient descent (see train_step): it predicts, measures the loss, computes how the loss changes
+# with every weight (backpropagation), and moves each weight a small step in the direction that lowers the loss.
 class FeedForward:
     def __init__(self, layers=None, configs=None):
-        # Default to new containers: a mutable default argument would be shared by every model
-        self.layers = layers if layers is not None else []
-        self.configs = configs if configs is not None else {}
-        self.learning_rate = 0.0001
-        self.history = {}
+        # New containers for each model (a default argument of [] would be one list shared by all models)
+        self.layers = layers if layers is not None else []     # weights, biases and activation of each layer
+        self.configs = configs if configs is not None else {}  # loss function and input normalization
+        self.cache = []    # inputs, z and output of each layer in the last forward pass, used by backward()
+        self.history = {}  # loss of each epoch in the last train()
 
     def add_layer(self, num_inputs, num_neurons, act_fn):
-        if act_fn == "relu":
-            std_dev = math.sqrt(2 / num_inputs) # He initialization for ReLU
-        else:
-            std_dev = math.sqrt(1 / num_inputs) # Xavier initialization for other activations
+        if act_fn not in ACTIVATIONS:
+            raise ValueError(f"Invalid activation function: {act_fn}. Use one of {list(ACTIVATIONS)}")
 
-        weights = np.random.normal(0, std_dev, (num_neurons, num_inputs))
-        biases = np.zeros(num_neurons)
+        # The initial weights are random: if they were all equal, every neuron of the layer would compute the same
+        # thing and receive the same update forever. Their scale keeps the variance of z similar from layer to layer,
+        # so the signal neither explodes nor fades: He initialization (variance 2 / num_inputs) for ReLU, which zeroes
+        # about half of its inputs, and LeCun initialization (variance 1 / num_inputs) for the other activations.
+        if act_fn == "relu":
+            std_dev = math.sqrt(2 / num_inputs)
+        else:
+            std_dev = math.sqrt(1 / num_inputs)
 
         self.layers.append({
-            "weights": weights,
-            "biases": biases,
+            "weights": np.random.normal(0, std_dev, (num_neurons, num_inputs)),  # one row per neuron
+            "biases": np.zeros(num_neurons),
             "act_fn": act_fn,
-            "z": [],
-            "output": []
         })
 
     def configure(self, loss):
+        check_loss(loss)
         self.configs["loss"] = loss
 
-    # Fits min-max scaling to the training inputs. It is stored in the configs, so it is saved with the model
-    # and every input (in train, predict and evaluate) is scaled with the same values, including after loading.
+    # Fits min-max scaling to the training inputs. It is stored in the configs, so it is saved with the model and
+    # every input (in train, predict and evaluate) is scaled with the same values, also after loading the model.
     def fit_normalization(self, inputs):
         min_vals, max_vals = minmax_stats(inputs)
         self.configs["normalization"] = {"method": "minmax", "min": min_vals, "max": max_vals}
 
     # Applies the fitted normalization, if any (models without it receive the inputs unchanged).
-    def normalize(self, input_values):
-        values = np.asarray(input_values, dtype=float)
+    def normalize(self, inputs):
+        inputs = np.asarray(inputs, dtype=float)
         normalization = self.configs.get("normalization")
 
         if normalization is None:
-            return values
+            return inputs
 
-        return apply_minmax(values, normalization["min"], normalization["max"])
+        return apply_minmax(inputs, normalization["min"], normalization["max"])
 
-    def forward(self, input_values, verbose=False):
-        return self.forward_layers(self.normalize(input_values), verbose)
+    def predict(self, inputs):
+        return self.forward(inputs)
 
-    # Forward pass over inputs that are already normalized
-    def forward_layers(self, values, verbose=False):
-        layer_size = len(self.layers)
+    # Forward pass: the inputs go through every layer, from the first to the last.
+    def forward(self, inputs):
+        return self.forward_layers(self.normalize(inputs))
 
-        for i, layer_param in enumerate(self.layers):
-            z, values = layer(values, layer_param["weights"], layer_param["biases"], layer_param["act_fn"])
-            layer_param["z"] = z  # pre-activation, where the activation derivatives are evaluated
-            layer_param["output"] = values
+    # Forward pass over inputs that are already normalized. Keeps the inputs, z and output of every layer in
+    # self.cache, because backward() needs them to compute the gradients.
+    def forward_layers(self, values):
+        self.cache = []
 
-            if verbose:
-                progress_bar = '#' * (i+1) + '.' * (layer_size - (i+1))
-                print(f"> {i+1}/{layer_size} [{progress_bar}] layer step", end='\r', flush=True)
+        for layer in self.layers:
+            inputs = values
+            z, values = layer_forward(inputs, layer["weights"], layer["biases"], layer["act_fn"])
+            self.cache.append({"inputs": inputs, "z": z, "output": values})
 
         return values
 
+    # Trains with mini-batch gradient descent.
+    #
+    # Each epoch goes through the whole dataset in batches of batch_size samples, with one train_step per batch. With
+    # shuffle, every epoch uses a new random order: data that is ordered (e.g. grouped by class) would otherwise give
+    # batches that each push the model towards a single class.
+    #
     # validation_data: optional (inputs, targets) not used for training. Its loss (and accuracy, for classification)
     # is calculated after each epoch, to see whether the model generalizes or starts to overfit.
     #
-    # The loss of each epoch (and the validation metrics) are kept in self.history.
-    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0, verbose=False, validation_data=None):
-        self.learning_rate = learning_rate
-        self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
-        total_loss = 0
-
+    # Returns self.history: the loss of each epoch, and the validation metrics.
+    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0,
+              shuffle=True, verbose=False, validation_data=None):
         inputs, targets = self.prepare_dataset(inputs, targets)
-
-        # Normalized once for the whole dataset; the backward pass needs the same normalized inputs as the forward pass
-        inputs = self.normalize(inputs)
-        num_batches = math.ceil(len(inputs) / batch_size)  # the last batch may be smaller
+        inputs = self.normalize(inputs)  # once for the whole dataset (train_step expects normalized inputs)
+        num_batches = math.ceil(len(inputs) / batch_size)
+        self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
 
         for epoch in range(epochs):
+            order = np.random.permutation(len(inputs)) if shuffle else np.arange(len(inputs))
             epoch_loss = 0
 
-            for batch_count, (batch_inputs, batch_targets) in enumerate(create_batches(inputs, targets, batch_size), start=1):
-                predictions = self.forward_layers(batch_inputs)
-
-                # Calculates the mean loss of the batch
-                batch_loss = loss_fn(self.configs["loss"], batch_targets, predictions)
-
-                # Weighted by the number of samples, so a smaller last batch doesn't count as a full one
-                epoch_loss += batch_loss * len(batch_inputs)
-
-                if is_softmax_crossentropy(self.layers[-1]["act_fn"], self.configs["loss"]):
-                    # Gradient in relation to the pre-activation of the softmax layer, already bounded to [-1, 1]
-                    gradients = softmax_crossentropy_delta(self.configs["loss"], batch_targets, predictions)
-                    skip_last_activation = True
-                else:
-                    # Calculates the gradient of the mean batch loss in relation to the output
-                    gradients = loss_derivative_fn(self.configs["loss"], batch_targets, predictions)
-                    skip_last_activation = False
-
-                    # Clip and normalize gradients
-                    gradients = clip_gradients(gradients, 10.0)
-                    #gradients = normalize_gradients(gradients)
-
-                # Backpropagation: one update per batch, with the gradient averaged over its samples
-                self.backward(gradients, batch_inputs, l1_lambda, l2_lambda, skip_last_activation)
+            for batch_count, (batch_inputs, batch_targets) in enumerate(create_batches(inputs[order], targets[order], batch_size), start=1):
+                batch_loss = self.train_step(batch_inputs, batch_targets, learning_rate, l1_lambda, l2_lambda)
+                epoch_loss += batch_loss * len(batch_inputs)  # weighted, because the last batch may be smaller
 
                 if verbose:
                     filled = round(30 * batch_count / num_batches)
                     progress_bar = '#' * filled + '.' * (30 - filled)
                     print(f"> Epoch: {epoch+1}/{epochs}, Batch: {batch_count}/{num_batches} [{progress_bar}] - batch_loss: {batch_loss}", end='\r', flush=True)
 
-            epoch_loss /= len(inputs)
-            total_loss += epoch_loss
-            self.history["loss"].append(epoch_loss)
-
-            summary = f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}"
+            self.history["loss"].append(epoch_loss / len(inputs))
+            summary = f"Epoch: {epoch+1}/{epochs}, Loss: {self.history['loss'][-1]}"
 
             if validation_data is not None:
                 val_loss, val_accuracy = self.evaluate(*validation_data)
@@ -151,60 +144,85 @@ class FeedForward:
                 if val_accuracy is not None:
                     summary += f", Val Accuracy: {val_accuracy:.4f}"
 
-            print('')  # add an empty line to prevent flush
-            print(f"{summary}, LR: {self.learning_rate}")
+            if verbose:
+                print('')  # ends the progress bar line
+                print(f"{summary}, LR: {learning_rate}")
 
-        return total_loss / epochs, self.learning_rate
+        return self.history
 
-    # Backpropagation: goes from the last layer to the first, calculating the gradients of each layer with matrix
-    # operations and updating its weights and biases.
+    # One step of gradient descent on a batch of (normalized) inputs:
+    #   1. forward pass: the predictions for the batch
+    #   2. loss: how wrong they are (the mean over the batch)
+    #   3. output delta: the gradient of the loss with respect to z of the output layer
+    #   4. backpropagation: the gradient of every weight and bias, from the last layer to the first
+    #   5. update: every parameter takes a step of learning_rate against its gradient
+    # Returns the loss of the batch (before the update).
+    def train_step(self, inputs, targets, learning_rate, l1_lambda=0.0, l2_lambda=0.0):
+        predictions = self.forward_layers(inputs)
+        loss = loss_fn(self.configs["loss"], targets, predictions)
+        output_delta = self.output_delta(targets, predictions)
+        gradients = self.backward(output_delta, l1_lambda, l2_lambda)
+        self.update(gradients, learning_rate)
+        return loss
+
+    # Gradient of the loss with respect to z of the output layer, called delta: one row per sample of the batch.
+    def output_delta(self, targets, predictions):
+        output_layer = self.layers[-1]
+
+        # Softmax with cross-entropy: the chain rule simplifies to (predictions - targets) / batch_size
+        if is_softmax_crossentropy(output_layer["act_fn"], self.configs["loss"]):
+            return softmax_crossentropy_delta(self.configs["loss"], targets, predictions)
+
+        # Otherwise, the derivative of the loss gives dL/dy (clipped, see clip_gradients), and the chain rule through
+        # the activation gives dL/dz = dL/dy * f'(z)
+        grad_output = clip_gradients(loss_derivative_fn(self.configs["loss"], targets, predictions), 10.0)
+        cache = self.cache[-1]
+        return activation_backward(output_layer["act_fn"], cache["z"], cache["output"], grad_output)
+
+    # Backpropagation: the chain rule applied from the last layer to the first. For a layer whose neurons have the
+    # gradient delta = dL/dz (one row per sample):
+    #   dL/dweights[j, k] = sum over the samples of delta[j] * inputs[k]   (each unit of weight changes z[j] by inputs[k])
+    #   dL/dbiases[j]     = sum over the samples of delta[j]
+    #   dL/dinputs[k]     = sum over the neurons of delta[j] * weights[j, k]
+    # The inputs of a layer are the outputs of the previous one, so dL/dinputs goes through the activation of the
+    # previous layer (activation_backward) to become its delta, and so on down to the first layer. Summing over the
+    # samples gives the gradient of the mean loss, because delta already includes the division by the batch size.
     #
-    # gradients: gradient of the mean batch loss in relation to the output of the last layer
-    #            (or to its pre-activation, when skip_last_activation is True).
-    # input_values: the normalized batch that was passed to forward_layers().
-    def backward(self, gradients, input_values, l1_lambda=0.0, l2_lambda=0.0, skip_last_activation=False):
-        gradients = np.atleast_2d(gradients)  # shape (batch_size, num_neurons)
-        last = len(self.layers) - 1
+    # Uses the values kept in self.cache by the last forward pass. Returns (dL/dweights, dL/dbiases) for each layer.
+    def backward(self, output_delta, l1_lambda=0.0, l2_lambda=0.0):
+        gradients = [None] * len(self.layers)
+        delta = np.atleast_2d(output_delta)  # shape (batch_size, num_neurons)
 
         for i in reversed(range(len(self.layers))):
             layer = self.layers[i]
+            layer_inputs = np.atleast_2d(self.cache[i]["inputs"])
 
-            # If it's the first layer, the input comes directly from the dataset
-            previous_output = np.atleast_2d(self.layers[i-1]["output"] if i > 0 else input_values)
+            grad_weights = np.dot(delta.T, layer_inputs)  # shape (num_neurons, num_inputs), like the weights
+            grad_biases = np.sum(delta, axis=0)
 
-            # Gradient of the loss in relation to each neuron's pre-activation, per sample: delta[s, j]
-            if i == last and skip_last_activation:
-                delta = gradients
-            else:
-                delta = np.atleast_2d(activation_backward(layer["act_fn"], layer["z"], layer["output"], gradients))
-
-            # Weight and bias gradients, summed over the samples of the batch
-            # (the loss gradient already carries the 1/batch_size factor):
-            #   grad_weight[j, k] = sum over samples s of delta[s, j] * previous_output[s, k]
-            #   grad_bias[j]      = sum over samples s of delta[s, j]
-            grad_weight = np.dot(delta.T, previous_output)  # shape (num_neurons, num_inputs)
-            grad_bias = np.sum(delta, axis=0)               # one value per neuron
-
-            # L1 regularization
+            # Regularization adds the gradient of a penalty on large weights, l1 * sum(|w|) + l2 / 2 * sum(w^2), which
+            # pulls the weights towards 0 and reduces overfitting (the biases aren't penalized)
             if l1_lambda > 0:
-                grad_weight += l1_lambda * np.sign(layer["weights"])
+                grad_weights += l1_lambda * np.sign(layer["weights"])
 
-            # L2 regularization
             if l2_lambda > 0:
-                grad_weight += l2_lambda * layer["weights"]
+                grad_weights += l2_lambda * layer["weights"]
 
-            # Prepares the gradient for the next layer (previous in the order of execution), using the weights from
-            # the forward pass, before they are updated:
-            #   gradients[s, k] = sum over neurons j of delta[s, j] * weights[j, k]
+            gradients[i] = (grad_weights, grad_biases)
+
             if i > 0:
-                gradients = np.dot(delta, layer["weights"])
+                previous = self.cache[i - 1]
+                grad_inputs = np.dot(delta, layer["weights"])
+                delta = np.atleast_2d(activation_backward(self.layers[i - 1]["act_fn"], previous["z"], previous["output"], grad_inputs))
 
-            # Updates weights and biases
-            layer["weights"] -= self.learning_rate * grad_weight
-            layer["biases"] -= self.learning_rate * grad_bias
+        return gradients
 
-    def predict(self, input_data, verbose=False):
-        return self.forward(input_data, verbose)
+    # Gradient descent: the gradient points to where the loss grows the fastest, so every parameter takes a small step
+    # the other way. The learning rate sets the size of the step: too small learns slowly, too large overshoots.
+    def update(self, gradients, learning_rate):
+        for layer, (grad_weights, grad_biases) in zip(self.layers, gradients):
+            layer["weights"] -= learning_rate * grad_weights
+            layer["biases"] -= learning_rate * grad_biases
 
     def summary(self):
         print("\n")
@@ -214,17 +232,10 @@ class FeedForward:
         total_params = 0
 
         for i, layer in enumerate(self.layers):
-            # Calculate the number of parameters in the current layer
-            num_inputs = len(layer["weights"][0])  # Number of inputs to the neurons in this layer
-            num_neurons = len(layer["weights"])    # Number of neurons in this layer
-            num_weights = num_inputs * num_neurons # Total weights in the layer
-            num_biases = num_neurons               # One bias per neuron
-            layer_params = num_weights + num_biases
-
-            # Update total parameters count
+            num_neurons, num_inputs = layer["weights"].shape
+            layer_params = num_neurons * num_inputs + num_neurons  # one weight per input and one bias, per neuron
             total_params += layer_params
 
-            # Print layer information
             print(f"Layer {i+1}:")
             print(f"    Activation Function: {layer['act_fn']}")
             print(f"    Number of Neurons: {num_neurons}")
@@ -269,11 +280,10 @@ class FeedForward:
 
         return inputs, targets
 
+    # Returns the mean loss and the accuracy (None for models that aren't classifiers, see accuracy).
     def evaluate(self, test_inputs, test_labels):
         test_inputs, test_labels = self.prepare_dataset(test_inputs, test_labels)
         predictions = self.forward(test_inputs)
-
-        # Calculate mean loss
         loss = loss_fn(self.configs["loss"], test_labels, predictions)
 
         return loss, self.accuracy(predictions, test_labels)
@@ -315,11 +325,9 @@ class FeedForward:
             "r2": float(1 - np.sum(errors ** 2) / total_variance) if total_variance > 0 else float("nan"),
         }
 
+    # Saves the parameters of each layer and the configs (not the cache of the last forward pass).
     def save(self, filepath):
-        # Only the parameters: the activations of the last forward pass ("z" and "output") aren't needed to use the
-        # model, and their size depends on whatever batch ran last
-        layers = [{"weights": l["weights"], "biases": l["biases"], "act_fn": l["act_fn"]} for l in self.layers]
-        dump({"layers": layers, "configs": self.configs}, filepath)
+        dump({"layers": self.layers, "configs": self.configs}, filepath)
 
     def get_layers(self):
         return copy.deepcopy(self.layers)
@@ -329,4 +337,3 @@ class FeedForward:
 
     def get_configs(self):
         return copy.deepcopy(self.configs)
-

@@ -1,67 +1,40 @@
-import numpy as np
-
+from data import set_seed, to_categorical
 from feedforward import FeedForward
-from etc import to_categorical, set_seed
+from weather import CLASS_NAMES, generate_weather_dataset
 
+
+# Classification: predicts the weather condition (Sunny, Cloudy, Rainy or Snowy) from the temperature, humidity and
+# wind speed, and saves the model to models/weather.joblib.
 
 SEED = None  # set an integer (e.g. 0) to make the run reproducible
 set_seed(SEED)
 
-
-def generate_weather_dataset(num_samples=10):
-    weather_data = {
-        'Sunny': {'temp': (20, 35), 'humidity': (10, 50), 'wind': (0, 20)},
-        'Cloudy': {'temp': (10, 20), 'humidity': (50, 90), 'wind': (0, 10)},
-        'Rainy': {'temp': (5, 15), 'humidity': (80, 100), 'wind': (10, 25)},
-        'Snowy': {'temp': (-5, 0), 'humidity': (50, 100), 'wind': (5, 15)}
-    }
-
-    features = []
-    labels = []
-
-    # Define label indices
-    label_indices = {label: idx for idx, label in enumerate(weather_data.keys())}
-
-    # Generate samples
-    for label, ranges in weather_data.items():
-        for _ in range(num_samples):
-            temp = np.random.uniform(*ranges['temp'])
-            humidity = np.random.uniform(*ranges['humidity'])
-            wind = np.random.uniform(*ranges['wind'])
-
-            features.append([temp, humidity, wind])
-            labels.append(label_indices[label])
-
-    # Convert to numpy arrays
-    features = np.array(features)
-
-    return features, labels, weather_data.keys()
-
-
-features, labels, labels_raw = generate_weather_dataset(100)
-labels_normalized = to_categorical(labels, num_classes=len(labels_raw))
+# categorical_crossentropy compares one-hot labels with the probabilities of the softmax output
+features, labels = generate_weather_dataset(100)
+labels_one_hot = to_categorical(labels, num_classes=len(CLASS_NAMES))
 
 # Validation: checked after each epoch to see whether the model generalizes (it isn't used for training)
-val_features, val_labels, _ = generate_weather_dataset(20)
-val_labels_normalized = to_categorical(val_labels, num_classes=len(labels_raw))
+val_features, val_labels = generate_weather_dataset(20)
+val_labels_one_hot = to_categorical(val_labels, num_classes=len(CLASS_NAMES))
 
-test_features, test_labels, test_labels_raw = generate_weather_dataset(20)
-test_labels_normalized = to_categorical(test_labels, num_classes=len(test_labels_raw))
+# Test: evaluated once, at the end, on data the training never saw
+test_features, test_labels = generate_weather_dataset(20)
+test_labels_one_hot = to_categorical(test_labels, num_classes=len(CLASS_NAMES))
 
 
 model = FeedForward()
 model.add_layer(num_inputs=features.shape[1], num_neurons=16, act_fn='relu')
-model.add_layer(num_inputs=16, num_neurons=len(labels_raw), act_fn='softmax')
+model.add_layer(num_inputs=16, num_neurons=len(CLASS_NAMES), act_fn='softmax')  # one probability per class
 model.configure(loss='categorical_crossentropy')
-model.fit_normalization(features)  # saved with the model, so run-weather.py scales its inputs the same way
+model.fit_normalization(features)  # the features have different scales (humidity goes up to 100, wind up to 25)
 model.summary()
 
-model.train(features, labels_normalized, epochs=100, learning_rate=0.1, verbose=True, validation_data=(val_features, val_labels_normalized))
+# Inputs scaled to [0, 1] give small gradients, so the learning rate can be larger
+model.train(features, labels_one_hot, epochs=100, learning_rate=0.1, verbose=True, validation_data=(val_features, val_labels_one_hot))
 
-test_loss, test_accuracy = model.evaluate(test_features, test_labels_normalized)
+test_loss, test_accuracy = model.evaluate(test_features, test_labels_one_hot)
 
 print(f"Test Accuracy: {test_accuracy*100:.2f}%")
 print(f"Test Loss: {test_loss:.2f}")
 
 model.save('models/weather.joblib')
-

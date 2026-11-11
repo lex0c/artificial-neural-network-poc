@@ -1,6 +1,10 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
+
+# Plots the metrics that train-cartpole.py and finetune-cartpole.py write to metrics/cartpole.csv, one figure per
+# training run (metrics_key), saved as cartpole_<metrics_key>.png. DQN.md explains how to read them.
+
 data = pd.read_csv('metrics/cartpole.csv')
 unique_keys = data['metrics_key'].unique()
 
@@ -57,7 +61,7 @@ for key in unique_keys:
     axs[2, 0].set_xlabel('Episode')
     axs[2, 0].set_ylabel('Learning Rate')
 
-    # Greedy evaluations (only every few episodes, and missing in older metrics)
+    # Greedy evaluations: only the episodes where one ran (every eval_freq episodes)
     if 'greedy_reward' in session_data.columns and session_data['greedy_reward'].notna().any():
         evaluations = session_data[session_data['greedy_reward'].notna()]
         axs[2, 1].plot(evaluations['episode'], evaluations['greedy_reward'], marker='o', linestyle='-', color='darkorange')
@@ -65,7 +69,7 @@ for key in unique_keys:
         axs[2, 1].set_xlabel('Episode')
         axs[2, 1].set_ylabel('Mean Reward')
 
-    # Mean of the best Q-value of the sampled states (missing in older metrics)
+    # Mean of the highest Q-value of the sampled states (empty until the replay memory is large enough)
     if 'mean_q' in session_data.columns and session_data['mean_q'].notna().any():
         axs[2, 2].plot(session_data['episode'], session_data['mean_q'], marker='o', linestyle='-', color='teal')
         axs[2, 2].set_title('Mean Q-Value per Episode')

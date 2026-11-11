@@ -1,42 +1,45 @@
 import gymnasium as gym
 
-from feedforward import FeedForward, clone_model
+from data import set_seed
 from dqn import train_dqn
-from etc import set_seed
+from feedforward import FeedForward, clone_model
 
 
-SEED = None  # set an integer (e.g. 0) to make the run reproducible
+# Trains a DQN agent on CartPole (see DQN.md) and saves the best model to models/cartpole.joblib.
 
-env = gym.make("CartPole-v1", render_mode="human")
+SEED = None     # set an integer (e.g. 0) to make the run reproducible
+RENDER = False  # True to watch the training episodes (much slower: rendering runs at about 50 steps per second)
+
+env = gym.make("CartPole-v1", render_mode="human" if RENDER else None)
 set_seed(SEED, env)
-eval_env = gym.make("CartPole-v1")  # without rendering, for the greedy evaluations
+eval_env = gym.make("CartPole-v1")  # a separate environment for the greedy evaluations
 
 
+# Q-network: the 4 numbers of the state in, one Q-value per action (push left, push right) out
 model = FeedForward()
 model.add_layer(num_inputs=env.observation_space.shape[0], num_neurons=64, act_fn='relu')
-model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')
+model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')  # a Q-value can be any number
 model.configure(loss="mse")
 model.summary()
 
-target_model = clone_model(model)
-target_model.summary()
+target_model = clone_model(model)  # gives stable Bellman targets (see DQN.md)
 
 
 train_dqn(
     env, model, target_model,
     episodes=500,
-    batch_size=512,
-    gamma=0.80, # higher values are stable, but learn slower within 500 episodes
+    batch_size=512,          # transitions sampled from the replay memory after each episode
+    gamma=0.80,              # discount factor: a reward k steps ahead counts gamma^k, so 0.8 looks about 5 steps ahead
     learning_rate=0.001,
-    epsilon=1.0,
-    epsilon_min=0.1,
-    epsilon_decay=0.990,
-    target_update_freq=10,
-    double_dqn=False, # didn't help at this gamma
+    epsilon=1.0,             # start with random actions only...
+    epsilon_min=0.1,         # ...down to 10% of random actions
+    epsilon_decay=0.990,     # epsilon is multiplied by this after every episode
+    target_update_freq=10,   # episodes between copies of the model into the target model
+    double_dqn=False,        # True for Double DQN, which reduces the overestimation of Q-values
     eval_env=eval_env,
-    eval_freq=50,
+    eval_freq=50,            # episodes between greedy evaluations
     eval_episodes=10,
-    checkpoint_filepath='models/cartpole.joblib', # the best model of the greedy evaluations, often not the last one
+    checkpoint_filepath='models/cartpole.joblib',  # keeps the model with the best greedy evaluation
 )
 
 
