@@ -6,14 +6,15 @@ import numpy as np
 from feedforward import load_model
 
 
-# Watches a trained DQN agent play with the greedy policy (always the action with the highest Q-value).
+# Watches a trained agent play with the greedy policy: the action with the highest output of the model, which is the
+# highest Q-value of a DQN or the most likely action of a PPO policy.
 #
-#   python run-dqn.py CartPole-v1 models/cartpole.joblib
-#   python run-dqn.py Acrobot-v1 models/acrobot.joblib
-#   python run-dqn.py CartPole-v1 models/cartpole-checkpoint.joblib 3   # number of episodes (default 10)
+#   python run-agent.py CartPole-v1 models/cartpole.joblib       # DQN
+#   python run-agent.py Acrobot-v1 models/acrobot-ppo.joblib     # PPO
+#   python run-agent.py CartPole-v1 models/cartpole-ppo.joblib 3 # number of episodes (default 10)
 
 if len(sys.argv) < 3:
-    sys.exit("usage: python run-dqn.py <Gymnasium environment> <model file> [episodes]")
+    sys.exit("usage: python run-agent.py <Gymnasium environment> <model file> [episodes]")
 
 env_id, model_filepath = sys.argv[1], sys.argv[2]
 episodes = int(sys.argv[3]) if len(sys.argv) > 3 else 10

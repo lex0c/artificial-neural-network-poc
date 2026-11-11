@@ -11,7 +11,8 @@ from unittest import mock
 
 import numpy as np
 
-from dqn import evaluate_greedy, learn_from_memory, replay_experience, train_dqn
+from dqn import learn_from_memory, play_episode, repeat_duration, replay_experience, train_dqn
+from rl import evaluate_greedy
 from feedforward import FeedForward, clone_model
 
 
@@ -113,6 +114,64 @@ class LearnFromMemoryTest(unittest.TestCase):
             for row_targets, row_predictions in zip(targets, predictions):
                 differences = np.flatnonzero(row_targets != row_predictions)
                 self.assertLessEqual(len(differences), 1)  # only the action taken (unless its prediction is already right)
+
+
+class ActionRecordingEnv:
+    # Episodes of 2,000 steps that record the actions taken; the model always prefers action 0
+    observation_space = SimpleNamespace(shape=(4,))
+
+    def __init__(self):
+        self.actions = []
+        self.action_space = SimpleNamespace(sample=lambda: int(np.random.randint(1, 3)))  # random actions are 1 or 2
+
+    def reset(self):
+        return np.zeros(4), {}
+
+    def step(self, action):
+        self.actions.append(int(action))
+        return np.zeros(4), 0.0, False, len(self.actions) == 2000, {}
+
+
+class ExplorationTest(unittest.TestCase):
+    PREFERS_0 = TableModel({0: [1.0, 0.0, 0.0]})
+
+    def runs_of_random_actions(self, epsilon, max_repeat):
+        np.random.seed(0)
+        env = ActionRecordingEnv()
+        play_episode(env, self.PREFERS_0, deque(), epsilon=epsilon, max_repeat=max_repeat)
+
+        # Lengths of the runs of the same random action (a new random action may repeat the previous one by chance,
+        # which merges two runs, so the lengths are only bounded by a multiple of max_repeat)
+        runs, previous = [], None
+        for action in env.actions:
+            if action != 0 and action == previous:
+                runs[-1] += 1
+            elif action != 0:
+                runs.append(1)
+            previous = action
+        return env.actions, runs
+
+    def test_classic_epsilon_greedy_changes_action_every_step(self):
+        actions, _ = self.runs_of_random_actions(epsilon=1.0, max_repeat=1)
+        changes = np.mean([a != b for a, b in zip(actions, actions[1:])])
+        self.assertAlmostEqual(changes, 0.5, delta=0.05)  # two random actions: a new one differs half of the time
+
+    def test_random_actions_are_held_with_max_repeat(self):
+        actions, runs = self.runs_of_random_actions(epsilon=1.0, max_repeat=10)
+        changes = np.mean([a != b for a, b in zip(actions, actions[1:])])
+        self.assertLess(changes, 0.35)   # holding actions changes them much less often
+        self.assertGreater(max(runs), 5)
+
+    def test_no_random_actions_without_exploration(self):
+        actions, _ = self.runs_of_random_actions(epsilon=0.0, max_repeat=10)
+        self.assertEqual(set(actions), {0})
+
+    def test_repeat_duration(self):
+        np.random.seed(0)
+        durations = [repeat_duration(10) for _ in range(2000)]
+        self.assertEqual((min(durations), max(durations)), (1, 10))
+        self.assertGreater(np.mean(np.array(durations) == 1), 0.5)  # short durations are the most likely
+        self.assertEqual({repeat_duration(1) for _ in range(100)}, {1})
 
 
 class ScriptedEnv:

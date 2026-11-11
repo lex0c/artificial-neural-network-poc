@@ -1,10 +1,11 @@
-import csv
 import random
 import time
 from collections import deque
 from datetime import datetime
 
 import numpy as np
+
+from rl import evaluate_greedy, write_to_csv
 
 
 # Deep Q-Network (DQN): an agent learns to act in an environment by estimating Q(state, action), the total
@@ -13,29 +14,41 @@ import numpy as np
 # action. DQN.md explains the concepts and how this training loop works.
 
 
-# Epsilon-greedy policy: with probability epsilon a random action (exploration: trying actions the model doesn't
-# rank first yet), otherwise the action with the highest Q-value (exploitation).
-def choose_action(env, model, state, epsilon):
-    if np.random.rand() < epsilon:
-        return env.action_space.sample()
+# How many steps a random action is held: 1 for classic epsilon-greedy, otherwise a random duration from 1 to
+# max_repeat where short durations are the most likely (a zeta distribution, as in Dabney et al. 2020).
+def repeat_duration(max_repeat):
+    if max_repeat == 1:
+        return 1
 
-    q_values = model.predict(state)
-
-    return np.argmax(q_values)
+    return int(min(np.random.zipf(2.0), max_repeat))
 
 
-# Plays one episode with the epsilon-greedy policy and stores every transition in the replay memory.
+# Plays one episode with the epsilon-greedy policy and stores every transition in the replay memory:
+# with probability epsilon a random action (exploration: trying actions the model doesn't rank first yet), otherwise
+# the action with the highest Q-value (exploitation).
+#
+# With max_repeat > 1, each random action is held for a random number of steps (temporally extended exploration, also
+# called ez-greedy). Changing to a random action at every step mostly cancels out, while holding an action builds
+# momentum, which environments such as Acrobot need to ever reach their goal by chance.
+#
 # Returns the total reward and the number of steps.
-def play_episode(env, model, memory, epsilon):
+def play_episode(env, model, memory, epsilon, max_repeat=1):
     num_observations = env.observation_space.shape[0]
 
     state, _ = env.reset()
     state = np.reshape(state, [1, num_observations])
     total_reward = 0
     steps = 0
+    random_steps_left = 0
 
     while True:
-        action = choose_action(env, model, state, epsilon)
+        if random_steps_left > 0:  # still holding a random action
+            random_steps_left -= 1
+        elif np.random.rand() < epsilon:  # explore
+            action = env.action_space.sample()
+            random_steps_left = repeat_duration(max_repeat) - 1
+        else:  # exploit
+            action = np.argmax(model.predict(state))
 
         observation, reward, terminated, truncated, info = env.step(action)
         next_state = np.reshape(observation, [1, num_observations])
@@ -122,51 +135,9 @@ def learn_from_memory(memory, model, target_model, batch_size, gamma, learning_r
     return float(np.mean(losses)), mean_q
 
 
-# Plays episodes with the greedy policy (always the action with the highest Q-value, no exploration) and returns the
-# mean total reward: what the agent has learned, without the random actions of the training. Each episode starts from
-# a fixed seed, so every evaluation along the training uses the same starting states.
-def evaluate_greedy(env, model, episodes=10, seed=0):
-    num_observations = env.observation_space.shape[0]
-    total_rewards = []
-
-    for i in range(episodes):
-        state, _ = env.reset(seed=seed + i)
-        total_reward = 0
-
-        while True:
-            q_values = model.predict(np.reshape(state, [1, num_observations]))
-            state, reward, terminated, truncated, _ = env.step(int(np.argmax(q_values)))
-            total_reward += reward
-
-            if terminated or truncated:
-                break
-
-        total_rewards.append(total_reward)
-
-    return float(np.mean(total_rewards))
-
-
-def write_to_csv(filepath, metric):
-    fieldnames = list(metric.keys())
-
-    with open(filepath, 'a+', newline='') as file:
-        file.seek(0)
-        header = file.readline().strip()
-
-        # Rows with other columns under the existing header would misalign the whole file
-        if header and header != ','.join(fieldnames):
-            raise ValueError(f"{filepath} has other columns ({header}); move it away to start a new metrics file")
-
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-
-        if not header:
-            writer.writeheader()
-
-        writer.writerow(metric)
-
-
 # Trains a DQN agent, updating the model in place. Each episode:
-#   1. act: play an episode with the epsilon-greedy policy, storing the transitions in the replay memory
+#   1. act: play an episode with the epsilon-greedy policy (holding each random action for up to max_repeat steps),
+#      storing the transitions in the replay memory
 #   2. learn: fit the model to the Bellman targets of a random batch of batch_size transitions from the memory, with
 #      one gradient descent step per minibatch of minibatch_size transitions
 #   3. evaluate: every eval_freq episodes, play eval_episodes with the greedy policy in eval_env (a separate
@@ -176,7 +147,7 @@ def write_to_csv(filepath, metric):
 #
 # The checkpoint keeps the model with the best greedy evaluation, starting with the initial model (evaluated before the
 # training): a DQN policy often gets worse after reaching its best, so the last model isn't necessarily the best one.
-# With metrics_filepath, every episode adds a row of metrics to that CSV file (see show-dqn-metrics.py).
+# With metrics_filepath, every episode adds a row of metrics to that CSV file (see show-metrics.py).
 #
 # It works with any Gymnasium environment whose actions are discrete (one Q-value per action) and whose state is a
 # vector of numbers.
@@ -186,7 +157,7 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
               epsilon=1.0, epsilon_min=0.1, epsilon_decay=1.0,
               learning_rate_decay=1.0, learning_rate_decay_freq=300,
               l1_lambda=0.0, l2_lambda=0.0,
-              target_update_freq=10, double_dqn=False, memory_size=100000, minibatch_size=1,
+              target_update_freq=10, double_dqn=False, memory_size=100000, minibatch_size=1, max_repeat=1,
               eval_env=None, eval_freq=50, eval_episodes=10,
               checkpoint_filepath=None, metrics_filepath=None):
     if checkpoint_filepath and eval_env is None:
@@ -208,7 +179,7 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
         start_time = time.time()
 
         # 1. Act
-        total_reward, steps = play_episode(env, model, memory, epsilon)
+        total_reward, steps = play_episode(env, model, memory, epsilon, max_repeat)
         episode_duration = time.time() - start_time
 
         episode_rewards.append(total_reward)

@@ -39,7 +39,7 @@ train_dqn(
     eval_env=eval_env,
     eval_freq=50,            # episodes between greedy evaluations
     eval_episodes=10,
-    metrics_filepath='metrics/cartpole.csv',  # plotted by show-dqn-metrics.py
+    metrics_filepath='metrics/cartpole.csv',  # plotted by show-metrics.py
     checkpoint_filepath='models/cartpole.joblib',  # keeps the model with the best greedy evaluation
 )
 
