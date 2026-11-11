@@ -32,6 +32,8 @@ python train.py
 
 Implementation of a Deep Q-Network (DQN) agent. The training loop lives in `dqn.py`; pass `double_dqn=True` to `train_dqn` to use Double DQN.
 
+Every 50 episodes the training evaluates the greedy policy (no exploration) over 10 episodes, and the model with the best evaluation is saved: the DQN policy often gets worse after reaching its best, so the last model isn't necessarily the best one. The metrics in `metrics/cartpole.csv` include the greedy reward and the mean Q-value, which should level off near `1 / (1 - gamma)` when the agent keeps the pole up.
+
 Run the trained model
 
 ```sh

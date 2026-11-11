@@ -11,7 +11,7 @@ from unittest import mock
 
 import numpy as np
 
-from dqn import replay_experience, train_dqn
+from dqn import evaluate_greedy, replay_experience, train_dqn
 from feedforward import FeedForward, clone_model
 
 
@@ -90,7 +90,7 @@ class ScriptedEnv:
         self.observation_space = SimpleNamespace(shape=(4,))
         self.action_space = SimpleNamespace(sample=lambda: 0)
 
-    def reset(self):
+    def reset(self, seed=None):
         self.episode += 1
         self.step_count = 0
         return np.full(4, float(self.episode)), {}
@@ -103,7 +103,8 @@ class ScriptedEnv:
         return observation, 1.0, done and ending == "terminated", done and ending == "truncated", {}
 
 
-class TrainDQNTest(unittest.TestCase):
+class DQNTrainingCase(unittest.TestCase):
+    # A small linear model, a temporary directory for the files, and train() to run train_dqn on a scripted environment
     def setUp(self):
         np.random.seed(0)
         random.seed(0)
@@ -128,6 +129,8 @@ class TrainDQNTest(unittest.TestCase):
 
         return rewards, replay, metrics
 
+
+class TrainDQNTest(DQNTrainingCase):
     def test_stores_terminated_but_not_truncated_as_terminal(self):
         rewards, replay, _ = self.train(ScriptedEnv([(3, "truncated"), (2, "terminated")]), batch_size=100)
 
@@ -176,6 +179,70 @@ class TrainDQNTest(unittest.TestCase):
 
         self.assertEqual(save.call_args_list, [mock.call(checkpoint)] * 2)
         self.assertTrue(os.path.exists(checkpoint))
+
+
+class CountingEnv:
+    # Each step gives a reward of 1. Taking action 0 ends the episode (terminated), otherwise it lasts 10 steps
+    # (truncated). Records the seed of each reset.
+    observation_space = SimpleNamespace(shape=(4,))
+
+    def __init__(self):
+        self.seeds = []
+
+    def reset(self, seed=None):
+        self.seeds.append(seed)
+        self.step_count = 0
+        return np.zeros(4), {}
+
+    def step(self, action):
+        self.step_count += 1
+        return np.zeros(4), 1.0, action == 0, self.step_count == 10, {}
+
+
+class EvaluateGreedyTest(unittest.TestCase):
+    def test_takes_the_action_with_the_highest_q_value(self):
+        prefers_1 = TableModel({0: [0.0, 1.0]})  # never takes action 0, so every episode lasts 10 steps
+        prefers_0 = TableModel({0: [1.0, 0.0]})  # takes action 0 at the first step
+
+        self.assertEqual(evaluate_greedy(CountingEnv(), prefers_1, episodes=3), 10.0)
+        self.assertEqual(evaluate_greedy(CountingEnv(), prefers_0, episodes=3), 1.0)
+
+    def test_every_evaluation_uses_the_same_starting_states(self):
+        env = CountingEnv()
+        evaluate_greedy(env, TableModel({0: [0.0, 1.0]}), episodes=3, seed=7)
+        evaluate_greedy(env, TableModel({0: [0.0, 1.0]}), episodes=3, seed=7)
+
+        self.assertEqual(env.seeds, [7, 8, 9, 7, 8, 9])
+
+
+class TrainDQNMetricsTest(DQNTrainingCase):
+    def test_greedy_evaluations_choose_the_checkpoint(self):
+        save = mock.Mock(wraps=self.model.save)
+        self.model.save = save
+        checkpoint = os.path.join(self.directory.name, "checkpoint.joblib")
+
+        # One evaluation episode before the training and after episodes 2, 4 and 6, with rewards 2, 5, 3 and 7
+        eval_env = ScriptedEnv([(2, "terminated"), (5, "terminated"), (3, "truncated"), (7, "terminated")])
+        _, _, metrics = self.train(ScriptedEnv([(3, "terminated")] * 6), eval_env=eval_env, eval_freq=2, eval_episodes=1, checkpoint_filepath=checkpoint)
+
+        self.assertEqual([row["greedy_reward"] for row in metrics], ["", "5.0", "", "3.0", "", "7.0"])
+
+        # Saved for the initial model (2) and when the greedy reward improved (5 and 7), not for 3
+        self.assertEqual(save.call_args_list, [mock.call(checkpoint)] * 3)
+
+    def test_mean_q_is_logged_when_the_model_trains(self):
+        # The memory needs more than batch_size=2 transitions, so the training starts in the third episode
+        _, _, metrics = self.train(ScriptedEnv([(1, "terminated")] * 4), batch_size=2)
+
+        self.assertEqual([row["loss"] != "" for row in metrics], [False, False, True, True])
+        self.assertEqual([row["mean_q"] != "" for row in metrics], [False, False, True, True])
+
+    def test_metrics_file_with_other_columns_is_not_mixed(self):
+        with open(os.path.join(self.directory.name, "metrics.csv"), "w") as file:
+            file.write("metrics_key,episode,total_reward\n20240101000000,1,10.0\n")
+
+        with self.assertRaises(ValueError):
+            self.train(ScriptedEnv([(1, "terminated")]))
 
 
 if __name__ == "__main__":

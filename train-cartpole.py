@@ -9,6 +9,7 @@ SEED = None  # set an integer (e.g. 0) to make the run reproducible
 
 env = gym.make("CartPole-v1", render_mode="human")
 set_seed(SEED, env)
+eval_env = gym.make("CartPole-v1")  # without rendering, for the greedy evaluations
 
 
 model = FeedForward()
@@ -32,8 +33,12 @@ train_dqn(
     epsilon_decay=0.990,
     target_update_freq=10,
     double_dqn=False, # didn't help at this gamma
+    eval_env=eval_env,
+    eval_freq=50,
+    eval_episodes=10,
+    checkpoint_filepath='models/cartpole.joblib', # the best model of the greedy evaluations, often not the last one
 )
 
 
-model.save('models/cartpole.joblib')
 env.close()
+eval_env.close()

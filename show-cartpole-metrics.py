@@ -57,6 +57,21 @@ for key in unique_keys:
     axs[2, 0].set_xlabel('Episode')
     axs[2, 0].set_ylabel('Learning Rate')
 
+    # Greedy evaluations (only every few episodes, and missing in older metrics)
+    if 'greedy_reward' in session_data.columns and session_data['greedy_reward'].notna().any():
+        evaluations = session_data[session_data['greedy_reward'].notna()]
+        axs[2, 1].plot(evaluations['episode'], evaluations['greedy_reward'], marker='o', linestyle='-', color='darkorange')
+        axs[2, 1].set_title('Greedy Reward (no exploration)')
+        axs[2, 1].set_xlabel('Episode')
+        axs[2, 1].set_ylabel('Mean Reward')
+
+    # Mean of the best Q-value of the sampled states (missing in older metrics)
+    if 'mean_q' in session_data.columns and session_data['mean_q'].notna().any():
+        axs[2, 2].plot(session_data['episode'], session_data['mean_q'], marker='o', linestyle='-', color='teal')
+        axs[2, 2].set_title('Mean Q-Value per Episode')
+        axs[2, 2].set_xlabel('Episode')
+        axs[2, 2].set_ylabel('Mean Max Q')
+
     plt.tight_layout(pad=3.0)
     plt.savefig(f'cartpole_{key}.png', dpi=300)
     plt.close(fig)
