@@ -51,3 +51,10 @@ Show training metrics
 python show-cartpole-metrics.py
 ```
 
+## Tests
+
+Checks the backpropagation against numerical gradients, among other things:
+
+```sh
+python -m unittest -v
+```

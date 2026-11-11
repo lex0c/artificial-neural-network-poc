@@ -30,15 +30,19 @@ def sigmoid_derivative(x):
 # The Softmax function converts a vector of numbers into a vector of probabilities, 
 # where each element represents the probability of the input belonging to one of the classes. 
 # It is useful in the output layer of multi-class classification problems.
+#
+# It normalizes along the last axis, so a batch with shape (batch_size, num_classes) gets one
+# probability distribution per sample.
 def softmax(x):
-    max_x = np.max(x)
+    x = np.asarray(x, dtype=float)
+    max_x = np.max(x, axis=-1, keepdims=True)
     exps = np.exp(x - max_x)
-    return exps / np.sum(exps)
+    return exps / np.sum(exps, axis=-1, keepdims=True)
 
 
-# Returns the derivative of the softmax function.
-def softmax_derivative(softmax_output):
-    s = softmax_output.reshape(-1, 1)
+# Returns the derivative (Jacobian matrix) of the softmax function evaluated at x, for a single sample.
+def softmax_derivative(x):
+    s = softmax(x).reshape(-1, 1)
     jacobian_matrix = np.diagflat(s) - np.dot(s, s.T)
     return jacobian_matrix
 
@@ -78,6 +82,20 @@ def activation_derivative_fn(fn, z):
         return softmax_derivative(z)
 
     raise Exception("Invalid derivative activation function.")
+
+
+# Backpropagates the gradient of the loss in relation to the activation output (grad) through the
+# activation function, returning the gradient in relation to the pre-activation z.
+#
+# z, output and grad have shape (num_neurons,) for a single sample or (batch_size, num_neurons) for a batch.
+def activation_backward(fn, z, output, grad):
+    if fn == "softmax":
+        # Every softmax output depends on every z of the same sample, so the gradient goes through the
+        # Jacobian J = diag(s) - s s^T (symmetric): J grad = s * (grad - sum(grad * s))
+        return output * (grad - np.sum(grad * output, axis=-1, keepdims=True))
+
+    # Element-wise activations: each output depends only on its own z
+    return grad * activation_derivative_fn(fn, z)
 
 
 # Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
@@ -120,58 +138,61 @@ def to_categorical_int(y_categorical):
     return np.argmax(y_categorical, axis=1)
 
 
-# The MSE measures the average of the squares of the differences between the predicted values and the actual values. 
+# All loss functions accept a single sample (y_pred with shape (num_outputs,)) or a batch
+# (y_pred with shape (batch_size, num_outputs)) and return the mean loss over the samples.
+# Their derivatives are the gradient of that mean, so they already include the 1/batch_size factor.
+def num_samples(y_pred):
+    return y_pred.shape[0] if y_pred.ndim > 1 else 1
+
+
+# The MSE measures the average of the squares of the differences between the predicted values and the actual values.
 # It provides a simple and effective means of assessing the performance of a model.
 def mse_loss(y_true, y_pred):
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
-    return np.mean((y_pred - y_true) ** 2, axis=0)
+    return np.mean((y_pred - y_true) ** 2)
 
 
 # Returns the derivative of the mse_loss function.
 def mse_loss_derivative(y_true, y_pred):
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
-    return 2 * (y_pred - y_true) / y_true.size
+    return 2 * (y_pred - y_true) / y_pred.size
 
 
 # Sparse Categorical Crossentropy computes the loss between the true labels and the predicted probabilities output.
 # The true labels in this case are integers that represent the class indices directly, and the predicted probabilities
 # are typically the output of a softmax layer which converts logits to probabilities that sum to one.
+#
+# y_true can be a single class index, a list of class indices or a column of class indices (shape (batch_size, 1)).
 def sparse_categorical_crossentropy(y_true, y_pred):
-    y_true = np.array(y_true, dtype=int)
-    y_pred = np.array(y_pred)
+    y_true = np.array(y_true, dtype=int).reshape(-1)
+    y_pred = np.atleast_2d(np.array(y_pred, dtype=float))
 
-    # Ensure predictions sum to 1 and are clipped to prevent log(0)
+    # Ensure predictions are clipped to prevent log(0)
     y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
 
-    # Calculate the logarithm of the predicted probabilities
-    log_probs = np.log(y_pred)
-
-    # Select the log probability corresponding to the true class for each instance
-    true_log_probs = log_probs[np.arange(len(y_true)), y_true]
+    # Select the probability of the true class for each sample
+    true_probs = y_pred[np.arange(len(y_true)), y_true]
 
     # Calculate the average loss
-    loss = -np.mean(true_log_probs)
-
-    return loss
+    return -np.mean(np.log(true_probs))
 
 
 # Returns the derivative of the sparse_categorical_crossentropy function.
 def sparse_categorical_crossentropy_derivative(y_true, y_pred):
-    y_true = np.array(y_true, dtype=int)
-    y_pred = np.array(y_pred)
+    y_true = np.array(y_true, dtype=int).reshape(-1)
+    y_pred = np.array(y_pred, dtype=float)
 
-    # Ensure predictions sum to 1 and are clipped to prevent log(0)
-    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    # Ensure predictions are clipped to prevent division by 0
+    probs = np.clip(np.atleast_2d(y_pred), 1e-7, 1 - 1e-7)
+    rows = np.arange(len(y_true))
 
-    # Create an array of zeros with the same shape as y_pred
-    gradients = np.zeros_like(y_pred)
+    # Only the probability of the true class affects the loss of each sample
+    gradients = np.zeros_like(probs)
+    gradients[rows, y_true] = -1 / probs[rows, y_true] / len(y_true)
 
-    # For each sample, subtract 1 from the gradient corresponding to the true class
-    gradients[np.arange(len(y_true)), y_true] = -1 / y_pred[np.arange(len(y_true)), y_true]
-
-    return gradients
+    return gradients.reshape(y_pred.shape)
 
 
 def categorical_crossentropy(y_true, y_pred):
@@ -179,7 +200,7 @@ def categorical_crossentropy(y_true, y_pred):
     y_pred = np.array(y_pred)
 
     y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)  # Clip predictions to avoid log(0)
-    return -np.sum(y_true * np.log(y_pred), axis=0)
+    return np.mean(-np.sum(y_true * np.log(y_pred), axis=-1))
 
 
 def categorical_crossentropy_derivative(y_true, y_pred):
@@ -187,7 +208,24 @@ def categorical_crossentropy_derivative(y_true, y_pred):
     y_pred = np.array(y_pred)
 
     y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)  # Clip predictions to avoid division by 0
-    return -y_true / y_pred
+    return -y_true / y_pred / num_samples(y_pred)
+
+
+# For a softmax output trained with cross-entropy, the chain rule through the softmax simplifies to
+# (y_pred - y_true) / batch_size in relation to the pre-activation z. Using it directly avoids dividing by
+# tiny probabilities, whose gradient would vanish when the softmax saturates (e.g. with unscaled inputs).
+def softmax_crossentropy_delta(fn, y_true, y_pred):
+    y_pred = np.array(y_pred, dtype=float)
+
+    if fn == "sparse_categorical_crossentropy":
+        class_indices = np.array(y_true, dtype=int).reshape(-1)
+        y_true = to_categorical(class_indices, num_classes=y_pred.shape[-1]).reshape(y_pred.shape)
+
+    return (y_pred - np.array(y_true)) / num_samples(y_pred)
+
+
+def is_softmax_crossentropy(act_fn, loss):
+    return act_fn == "softmax" and loss in ("categorical_crossentropy", "sparse_categorical_crossentropy")
 
 
 def loss_fn(fn, y_true, y_pred):

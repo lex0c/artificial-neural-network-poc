@@ -68,7 +68,7 @@ def replay_experience(replay_memory):
     minibatch = random.sample(replay_memory, batch_size)
 
     # Extract elements of each experience
-    states, actions, rewards, next_states, dones = map(np.array, zip(*minibatch))
+    states, actions, rewards, next_states, terminals = map(np.array, zip(*minibatch))
 
     # Reshape states and next_states for prediction
     states = np.vstack(states)  # Stack states vertically to create a proper batch
@@ -83,7 +83,8 @@ def replay_experience(replay_memory):
     max_next_q_values = np.max(next_q_values, axis=1)
 
     # Compute target Q-values using the Bellman equation
-    target_q_values = rewards + gamma * max_next_q_values * (1 - dones)
+    # Only a real terminal state (pole fell or cart left the track) has no future value; hitting the time limit (truncation) still bootstraps
+    target_q_values = rewards + gamma * max_next_q_values * (1 - terminals)
 
     # Update the Q-values for the actions taken
     targets = current_q_values.copy()  # Start with current predictions
@@ -95,7 +96,7 @@ def replay_experience(replay_memory):
 
 def train_model(train_data):
     if train_data['states']:
-        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate, l1_lambda=0.0001, l2_lambda=0.0001)
+        loss, _ = model.train(np.array(train_data['states']), np.array(train_data['targets']), epochs=1, learning_rate=learning_rate, batch_size=1, l1_lambda=0.0001, l2_lambda=0.0001)  # one update per transition
         train_data['states'].clear()
         train_data['targets'].clear()
         return loss
@@ -117,7 +118,7 @@ for e in range(episodes):
         next_state = np.reshape(observation, [1, env.observation_space.shape[0]])
         done = terminated or truncated
 
-        memory.append((state, action, reward, next_state, done))
+        memory.append((state, action, reward, next_state, terminated))
 
         state = next_state
         total_reward += reward
