@@ -63,7 +63,7 @@ per image. It reaches about 97.7% on the 10,000 test images in 10 epochs. It sho
 and validation. `mnist.py` downloads the dataset once (about 11 MB) into `datasets/mnist/` and reads its file format.
 
 ```sh
-python train-mnist.py   # trains and saves models/mnist.joblib (about 20 seconds)
+python train-mnist.py   # trains and saves models/mnist.joblib (about 15 seconds)
 python run-mnist.py     # per-digit report, confusion matrix, and the first mistakes in mnist-errors.png
 ```
 

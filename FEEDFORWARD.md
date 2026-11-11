@@ -174,7 +174,7 @@ On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
 | SGD, `learning_rate=0.001` | 58.6% | 81.2% | 89.8% | 87.3% |
 
 Adam learns more per epoch and doesn't need a learning rate tuned to the scale of the gradients: with Adam's
-`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though, so an epoch took about twice as long.
+`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though: the training took about 1.7 times as long (15 s against 9 s).
 
 ### Weight initialization
 

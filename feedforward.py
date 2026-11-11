@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 from joblib import dump, load
+from threadpoolctl import threadpool_limits
 
 from activations import ACTIVATIONS, activation_fn, activation_backward
 from data import apply_minmax, create_batches, minmax_stats
@@ -10,6 +11,12 @@ from losses import (
     check_loss, clip_gradients, is_softmax_crossentropy, loss_derivative_fn, loss_fn, softmax_crossentropy_delta,
 )
 from optimizers import make_optimizer
+
+
+# NumPy's matrix products run on a math library (BLAS) that splits them across all the CPU cores. The matrices of this
+# project are small, and splitting them costs more than it saves: one MNIST epoch takes about 1.7 s with one thread
+# and 2.8 s with 12. So it uses one thread. Call threadpool_limits again (e.g. threadpool_limits(4)) for larger models.
+threadpool_limits(1)
 
 
 # A dense (fully connected) layer: each neuron j computes a weighted sum of all the inputs plus its bias,

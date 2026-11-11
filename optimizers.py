@@ -41,15 +41,23 @@ class Adam:
 
         self.t += 1
 
+        # The textbook form divides m by (1 - beta1^t) and v by (1 - beta2^t) for every parameter:
+        #   parameter -= learning_rate * m_corrected / (sqrt(v_corrected) + epsilon)
+        # Both corrections are the same number for all the parameters of an update, so they can be folded into the
+        # step size (and epsilon scaled to match), which gives exactly the same update with fewer passes over the arrays
+        # (as noted in section 2 of the Adam paper).
+        step_size = learning_rate * np.sqrt(1 - self.beta2 ** self.t) / (1 - self.beta1 ** self.t)
+        epsilon = self.epsilon * np.sqrt(1 - self.beta2 ** self.t)
+
         for layer, m, v, layer_gradients in zip(layers, self.m, self.v, gradients):
             for key, grad in zip(("weights", "biases"), layer_gradients):
-                m[key] = self.beta1 * m[key] + (1 - self.beta1) * grad
-                v[key] = self.beta2 * v[key] + (1 - self.beta2) * grad ** 2
+                # The running averages, updated in place: m = beta1 * m + (1 - beta1) * grad, and the same for v
+                m[key] *= self.beta1
+                m[key] += (1 - self.beta1) * grad
+                v[key] *= self.beta2
+                v[key] += (1 - self.beta2) * grad * grad
 
-                m_corrected = m[key] / (1 - self.beta1 ** self.t)
-                v_corrected = v[key] / (1 - self.beta2 ** self.t)
-
-                layer[key] -= learning_rate * m_corrected / (np.sqrt(v_corrected) + self.epsilon)
+                layer[key] -= step_size * m[key] / (np.sqrt(v[key]) + epsilon)
 
 
 OPTIMIZERS = {"sgd": SGD, "adam": Adam}

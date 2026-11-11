@@ -80,5 +80,14 @@ def activation_backward(name, z, output, grad_output):
         # Multiplying grad_output by it simplifies to s * (grad_output - sum(grad_output * s)).
         return output * (grad_output - np.sum(grad_output * output, axis=-1, keepdims=True))
 
+    # The derivatives of sigmoid and tanh can be written with their own output y = f(z), which the forward pass already
+    # computed: sigmoid'(z) = y * (1 - y) and tanh'(z) = 1 - y^2. Using it gives the same numbers as sigmoid_derivative
+    # and tanh_derivative without computing exp or tanh again.
+    if name == "sigmoid":
+        return grad_output * (output * (1 - output))
+
+    if name == "tanh":
+        return grad_output * (1 - output ** 2)
+
     # Each output depends only on its own z: dL/dz = dL/dy * f'(z)
     return grad_output * ELEMENTWISE_DERIVATIVES[name](z)
