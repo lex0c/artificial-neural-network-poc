@@ -148,12 +148,35 @@ Over 9 seeds:
 
 ## DQN or PPO?
 
+### In this project
+
+Measured over 9 seeds each, with the greedy policy on episodes the agents never saw:
+
+| | DQN (`dqn.py`) | PPO (`ppo.py`) |
+| --- | --- | --- |
+| CartPole | about 415 after 500 episodes (88,000 to 161,000 steps) and 450 after 1,000, oscillating | 500 in every run, first reached within 10,000 to 41,000 steps, and it stays there |
+| Acrobot | 2 to 7 good runs of 9 with the schedule of this project. Learning after every step: the best checkpoint between -84 and -104 in 8 runs within 50,000 steps, but the last policy back at -500 in 6 | every run learns (about -85, passing -150 within 50,000 to 180,000 steps) and stays stable |
+| Hyperparameters | tuned for each environment | the same for both |
+
+PPO was more reliable, more stable and easier to tune, although DQN got much more tuning effort. When DQN did learn
+Acrobot, it needed fewer steps of the environment than PPO: that is the reuse of old data that the general comparison
+below refers to. On CartPole, the DQN of this project needed more steps than PPO.
+
+Two limits to this verdict:
+
+- The DQN here is simplified (see "Simplifications in this project" in DQN.md). Modern variants, such as Rainbow
+  (Hessel et al. 2018), which combines Double DQN, n-step returns, prioritized replay and other improvements, are much
+  more stable.
+- Two simple environments and 9 seeds aren't a general comparison of the two methods.
+
+### In general
+
 | | DQN | PPO |
 | --- | --- | --- |
 | Learns | the value of each action (Q) | the probability of each action, and a critic V |
 | Actions | discrete only | discrete or continuous (a continuous action needs another output, e.g. a mean and a spread) |
 | Data | replay memory, each step reused many times | collected with the current policy, used for a few epochs, then thrown away |
-| Steps of the environment needed | fewer | more |
+| Steps of the environment needed | usually fewer: each step is reused | usually more |
 | Exploration | from outside (epsilon-greedy) | built into the policy |
 | Stability | can oscillate or diverge (target model, many tricks) | stable: each update can only move the policy a little |
 | Hyperparameters | sensitive, tuned per environment | the defaults usually work |

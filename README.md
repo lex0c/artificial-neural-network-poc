@@ -79,7 +79,8 @@ python run-agent.py CartPole-v1 models/cartpole.joblib    # watch an agent play 
 python show-metrics.py metrics/cartpole.csv               # plots the training metrics to cartpole_<run>.png
 ```
 
-PPO reaches the maximum of 500 in every run and stays there, while DQN averages about 420 to 450 and oscillates.
+PPO reaches the maximum of 500 in every run and stays there, while DQN averages about 420 to 450 and oscillates
+("DQN or PPO?" in PPO.md compares them, with the limits of the comparison).
 `finetune-cartpole.py` continues training the DQN model with less exploration, and saves the best model to
 `models/cartpole-checkpoint.joblib` and the last one to `models/cartpole-finetuned.joblib`.
 
