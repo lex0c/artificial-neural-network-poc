@@ -1,6 +1,6 @@
 import gymnasium as gym
 
-from cli import project_path, training_args
+from cli import keep_dashboard_open, start_dashboard, project_path, training_args
 from data import set_seed
 from dqn import train_dqn
 from feedforward import FeedForward, clone_model
@@ -21,6 +21,7 @@ model.add_layer(num_inputs=env.observation_space.shape[0], num_neurons=64, act_f
 model.add_layer(num_inputs=64, num_neurons=env.action_space.n, act_fn='linear')  # a Q-value can be any number
 model.configure(loss="mse")
 model.summary()
+monitor = start_dashboard(args.dashboard, {"Q-network": model})
 
 target_model = clone_model(model)  # gives stable Bellman targets (see DQN.md)
 
@@ -46,3 +47,4 @@ train_dqn(
 
 env.close()
 eval_env.close()
+keep_dashboard_open(monitor)

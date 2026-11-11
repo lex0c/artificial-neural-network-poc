@@ -1,6 +1,6 @@
 import gymnasium as gym
 
-from cli import display_path, load_trained_model, project_path, training_args
+from cli import keep_dashboard_open, start_dashboard, display_path, load_trained_model, project_path, training_args
 from data import set_seed
 from dqn import train_dqn
 from feedforward import clone_model
@@ -19,6 +19,7 @@ eval_env = gym.make("CartPole-v1")  # a separate environment for the greedy eval
 
 model = load_trained_model(project_path('models', 'cartpole.joblib'), 'train-cartpole.py')
 model.summary()
+monitor = start_dashboard(args.dashboard, {"Q-network": model})
 
 target_model = clone_model(model)
 
@@ -50,3 +51,4 @@ model.save(finetuned_filepath)
 print(f"Last model saved to {display_path(finetuned_filepath)}")
 env.close()
 eval_env.close()
+keep_dashboard_open(monitor)

@@ -1,6 +1,6 @@
 import numpy as np
 
-from cli import display_path, project_path, training_args
+from cli import keep_dashboard_open, start_dashboard, display_path, project_path, training_args
 from data import set_seed
 from feedforward import FeedForward
 
@@ -22,6 +22,7 @@ model = FeedForward()
 model.add_layer(num_inputs=1, num_neurons=1, act_fn='linear')
 model.configure(loss="mse")
 model.summary()
+monitor = start_dashboard(args.dashboard, {"linear regression": model})
 
 # batch_size=1: one update per sample. log_every=50: a line every 50 epochs
 model.train(xs, ys, epochs=args.epochs, learning_rate=0.0001, batch_size=1, verbose=True, log_every=50)
@@ -38,3 +39,4 @@ print(f"Test R2: {metrics['r2']:.4f}")
 model_filepath = project_path('models', 'simple_linear_function.joblib')
 model.save(model_filepath)
 print(f"Model saved to {display_path(model_filepath)}")
+keep_dashboard_open(monitor)

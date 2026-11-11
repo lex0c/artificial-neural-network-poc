@@ -1,6 +1,6 @@
 import gymnasium as gym
 
-from cli import project_path, training_args
+from cli import keep_dashboard_open, start_dashboard, project_path, training_args
 from data import set_seed
 from feedforward import FeedForward
 from ppo import train_ppo
@@ -31,6 +31,7 @@ def network(num_outputs, output_act_fn, loss):
 policy = network(env.action_space.n, 'softmax', None)  # its gradient comes from the PPO objective
 value_model = network(1, 'linear', 'mse')
 policy.summary()
+monitor = start_dashboard(args.dashboard, {"policy": policy, "value model": value_model})
 
 
 train_ppo(
@@ -54,3 +55,4 @@ train_ppo(
 
 env.close()
 eval_env.close()
+keep_dashboard_open(monitor)

@@ -186,6 +186,10 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
         mean_reward = float(np.mean(finished)) if finished else None
         metrics = {key: float(np.mean([s[key] for s in stats])) for key in ("loss", "value_loss", "entropy", "clip_fraction")}
 
+        policy.notify("on_metrics", {'iteration': iteration, 'mean_episode_reward': mean_reward, 'greedy_reward': greedy_reward,
+                                     'value_loss': metrics["value_loss"], 'entropy': metrics["entropy"],
+                                     'clip_fraction': metrics["clip_fraction"]})
+
         if metrics_filepath:
             write_to_csv(metrics_filepath, {
                 'metrics_key': metrics_key,

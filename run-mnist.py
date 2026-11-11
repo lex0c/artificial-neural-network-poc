@@ -2,15 +2,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix
 
-from cli import display_path, load_trained_model, project_path
+from cli import display_path, keep_dashboard_open, load_trained_model, project_path, run_args, start_dashboard
 from mnist import load_mnist
 
 
 # Evaluates the model saved by train-mnist.py on the 10,000 test images: prints the accuracy, the precision, recall and
 # F1 of each digit and the confusion matrix, and saves the first mistakes to mnist-errors.png.
 
+args = run_args("Evaluates the model saved by train-mnist.py on the test images.")
 model = load_trained_model(project_path('models', 'mnist.joblib'), 'train-mnist.py')
 model.summary()
+monitor = start_dashboard(args.dashboard, {"digit classifier": model})
 
 _, (test_images, test_labels) = load_mnist()
 
@@ -39,3 +41,4 @@ plt.tight_layout()
 figure_filepath = project_path('mnist-errors.png')
 plt.savefig(figure_filepath, dpi=150)
 print(f"\nThe first mistakes saved to {display_path(figure_filepath)}")
+keep_dashboard_open(monitor)

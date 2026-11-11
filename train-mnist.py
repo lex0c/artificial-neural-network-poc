@@ -1,4 +1,4 @@
-from cli import display_path, project_path, training_args
+from cli import keep_dashboard_open, start_dashboard, display_path, project_path, training_args
 from data import set_seed
 from feedforward import FeedForward
 from mnist import load_mnist
@@ -22,6 +22,7 @@ model.add_layer(num_inputs=784, num_neurons=128, act_fn='relu')    # one input p
 model.add_layer(num_inputs=128, num_neurons=10, act_fn='softmax')  # one probability per digit
 model.configure(loss='sparse_categorical_crossentropy', optimizer='adam')  # the labels are digits, not one-hot vectors
 model.summary()
+monitor = start_dashboard(args.dashboard, {"digit classifier": model})
 
 model.train(train_images, train_labels, epochs=args.epochs, learning_rate=0.001, batch_size=64, verbose=True, validation_data=(val_images, val_labels))
 
@@ -33,3 +34,4 @@ print(f"Test Loss: {test_loss:.4f}")
 model_filepath = project_path('models', 'mnist.joblib')
 model.save(model_filepath)
 print(f"Model saved to {display_path(model_filepath)}")
+keep_dashboard_open(monitor)

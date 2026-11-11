@@ -3,15 +3,17 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
 
-from cli import display_path, load_trained_model, project_path
+from cli import display_path, keep_dashboard_open, load_trained_model, project_path, run_args, start_dashboard
 from weather import CLASS_NAMES, generate_weather_dataset
 
 
 # Evaluates the model saved by train-weather.py on new data: prints the precision, recall and F1 of each class and
 # saves the confusion matrix to confusion-matrix.png.
 
+args = run_args("Evaluates the model saved by train-weather.py on new data.")
 model = load_trained_model(project_path('models', 'weather.joblib'), 'train-weather.py')
 model.summary()
+monitor = start_dashboard(args.dashboard, {"weather classifier": model})
 
 
 # Confusion matrix: the rows are the true conditions and the columns the predicted ones, so the diagonal counts the
@@ -35,3 +37,4 @@ plot_confusion_matrix(confusion_matrix(test_labels, predicted_labels), CLASS_NAM
 # were found. F1 combines both. Accuracy alone hides which classes get confused.
 print(classification_report(test_labels, predicted_labels, target_names=CLASS_NAMES, digits=3))
 print(f"Confusion matrix saved to {display_path(figure_filepath)}")
+keep_dashboard_open(monitor)

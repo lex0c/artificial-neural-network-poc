@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model Dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677085; --border: #dde1e8;
+    --positive: 37, 99, 235; --negative: 220, 38, 38; --neutral: 222, 226, 233; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b1f27; --text: #e6e9ef; --muted: #959cad; --border: #2c323d;
+      --positive: 96, 150, 255; --negative: 248, 96, 96; --neutral: 52, 58, 70; --accent: #6096ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px;
+           border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  .tabs button { border: 1px solid var(--border); background: transparent; color: var(--text); padding: 4px 10px;
+                 border-radius: 6px; cursor: pointer; margin-right: 4px; }
+  .tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #status { margin-left: auto; color: var(--muted); }
+  #status.live::before { content: "\25CF "; color: #16a34a; }
+  #status.lost::before { content: "\25CF "; color: #dc2626; }
+  main { display: grid; gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
+  .row, .advanced { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .row, .advanced { grid-template-columns: minmax(0, 1fr); } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-width: 0; }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .info { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
+  canvas { display: block; max-width: 100%; }
+  .pixelated { image-rendering: pixelated; }
+  .step { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .step h3 { font-size: 13px; margin: 0 0 6px; }
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+  .vector { margin-top: 4px; min-width: 0; }
+  .vector .name { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .vector .name code { color: var(--text); font-size: 12px; }
+  .note { font-size: 12px; margin-top: 6px; }
+  .connector { color: var(--muted); font-size: 12px; padding: 6px 0 6px 18px; border-left: 2px solid var(--border);
+               margin-left: 20px; }
+  .connector code { color: var(--text); font-size: 12px; }
+  .legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .layer { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+  .layer:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .layer h3 { font-size: 13px; margin: 0 0 4px; }
+  .figures { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 8px; align-items: start; margin-top: 6px; }
+  .caption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .bars { display: grid; gap: 3px; }
+  .bar { display: grid; grid-template-columns: 70px minmax(0, 1fr) 64px; gap: 6px; align-items: center; font-size: 12px; }
+  .bar .track { height: 12px; background: rgb(var(--neutral)); border-radius: 3px; position: relative; overflow: hidden; }
+  .bar .fill { position: absolute; top: 0; bottom: 0; }
+  .bar.best { font-weight: 600; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .lead { color: var(--muted); margin: 0 0 12px; }
+  .pipeline { display: flex; align-items: stretch; overflow-x: auto; padding-bottom: 4px; }
+  .box { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; flex: 1 1 0; min-width: 140px;
+         max-width: 210px; display: flex; flex-direction: column; gap: 4px; }
+  .box.answer { border: 2px solid var(--accent); }
+  .box .kind { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .box .big { font-size: 28px; font-weight: 600; line-height: 1.1; }
+  .box .unit { font-size: 13px; font-weight: 400; color: var(--muted); }
+  .box .what { font-size: 12px; color: var(--muted); }
+  .compact .bar { grid-template-columns: 24px minmax(0, 1fr) 52px; }
+  .arrow { flex: 0 0 76px; display: flex; flex-direction: column; justify-content: center; align-items: center;
+           text-align: center; font-size: 11px; color: var(--muted); padding: 0 4px; }
+  .arrow .line { font-size: 22px; line-height: 1; }
+  .meter { height: 8px; background: rgb(var(--neutral)); border-radius: 4px; overflow: hidden; margin-top: 2px; }
+  .meter div { height: 100%; background: var(--accent); }
+  .facts { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .metric { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; align-items: center; padding: 10px 0;
+            border-top: 1px solid var(--border); }
+  .metric:first-child { border-top: none; padding-top: 0; }
+  .metric .title { font-weight: 600; }
+  .metric .value { font-size: 18px; font-weight: 600; margin-right: 6px; }
+  .good { color: #16a34a; }
+  .bad { color: #d97706; }
+  .check { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; margin-bottom: 10px; }
+  .check .icon { font-weight: 700; text-align: center; }
+  .check .icon.ok { color: #16a34a; }
+  .check .icon.warn { color: #d97706; }
+  .check .icon.info { color: var(--muted); }
+  details > summary { cursor: pointer; font-weight: 600; }
+  .advanced { margin-top: 12px; }
+  #tooltip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid var(--border);
+             border-radius: 6px; padding: 6px 8px; font-size: 12px; display: none; z-index: 10; }
+  input[type=range] { width: 200px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Model Dashboard</h1>
+  <div class="tabs" id="tabs"></div>
+  <label id="sample-picker" class="muted"></label>
+  <span id="status">connecting...</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>What the network does</h2>
+    <p class="lead">How the network turns one input into an answer, from left to right.</p>
+    <div class="pipeline" id="pipeline"></div>
+    <div class="facts" id="network-facts"></div>
+  </section>
+  <div class="row">
+    <section class="panel">
+      <h2>Is it learning?</h2>
+      <div id="learning"></div>
+    </section>
+    <section class="panel">
+      <h2>Health checks</h2>
+      <div id="health"></div>
+    </section>
+  </div>
+  <details class="panel" id="advanced">
+    <summary>Inside the layers (advanced)</summary>
+    <div class="caption">Every value and every weight of the network. Blue is positive, red negative, stronger when
+      larger. Hover a cell for its value.</div>
+    <div class="advanced">
+      <section>
+        <h2>Forward pass</h2>
+        <div class="info" id="model-info"></div>
+        <div id="forward"></div>
+      </section>
+      <section>
+        <h2>Weights</h2>
+        <div id="layers"></div>
+      </section>
+    </div>
+  </details>
+</main>
+<div id="tooltip"></div>
+
+<script>
+// State received from the server (monitor.py), the model shown and the sample selected
+let state = null;
+let selectedModel = null;
+let selectedSample = 0;
+
+// ---------- Data ----------
+
+// Arrays arrive as base64-encoded float32 with their shape
+function decode(array) {
+  const bytes = Uint8Array.from(atob(array.data), c => c.charCodeAt(0));
+  return { shape: array.shape, values: new Float32Array(bytes.buffer) };
+}
+
+// Row i of a 2-D array (a 1-D array is a single row)
+function row(array, i) {
+  const columns = array.shape.length > 1 ? array.shape[1] : array.shape[0];
+  return array.values.subarray(i * columns, (i + 1) * columns);
+}
+
+function maxAbs(values) {
+  let max = 0;
+  for (const v of values) max = Math.max(max, Math.abs(v));
+  return max || 1;
+}
+
+function format(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  const abs = Math.abs(v);
+  return abs !== 0 && (abs < 1e-3 || abs >= 1e5) ? v.toExponential(2) : Number(v.toPrecision(4)).toString();
+}
+
+// ---------- Colors ----------
+
+// Read once per render: a grid of 784 cells would otherwise ask the browser for the same colors thousands of times
+let colorCache = {};
+function cssColor(name) {
+  if (!colorCache[name]) {
+    colorCache[name] = getComputedStyle(document.documentElement).getPropertyValue(name).trim().split(",").map(Number);
+  }
+  return colorCache[name];
+}
+
+// A value in [-1, 1] -> from red (negative) through neutral (0) to blue (positive)
+function divergingColor(t) {
+  const neutral = cssColor("--neutral");
+  const end = cssColor(t >= 0 ? "--positive" : "--negative");
+  const a = Math.min(1, Math.abs(t));
+  return neutral.map((n, i) => Math.round(n + (end[i] - n) * a));
+}
+
+function rgb(c, alpha = 1) {
+  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${alpha})`;
+}
+
+// ---------- Drawing helpers ----------
+
+function setupCanvas(canvas, width, height) {
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  canvas.style.height = height + "px";
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  return context;
+}
+
+// A matrix (rows x columns) as an image: one pixel per value, scaled up by CSS
+function heatmap(values, rows, columns, maxWidth, maxHeight) {
+  const canvas = document.createElement("canvas");
+  canvas.width = columns;
+  canvas.height = rows;
+  canvas.className = "pixelated";
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(columns, rows);
+  const max = maxAbs(values);
+
+  for (let i = 0; i < values.length; i++) {
+    const c = divergingColor(values[i] / max);
+    image.data.set([c[0], c[1], c[2], 255], i * 4);
+  }
+
+  context.putImageData(image, 0, 0);
+  const scale = Math.max(1, Math.min(maxWidth / columns, maxHeight / rows));
+  canvas.style.width = Math.min(maxWidth, columns * scale) + "px";
+  canvas.style.height = Math.min(maxHeight, rows * scale) + "px";
+  return canvas;
+}
+
+function histogram(values, width, height) {
+  const canvas = document.createElement("canvas");
+  const context = setupCanvas(canvas, width, height);
+  canvas.style.width = width + "px";
+  let min = Infinity, max = -Infinity;
+  for (const v of values) { min = Math.min(min, v); max = Math.max(max, v); }
+  const bins = new Array(24).fill(0);
+  const span = max - min || 1;
+  for (const v of values) bins[Math.min(23, Math.floor((v - min) / span * 24))]++;
+  const top = Math.max(...bins);
+  bins.forEach((count, i) => {
+    const center = min + (i + 0.5) / 24 * span;
+    context.fillStyle = rgb(divergingColor(center / Math.max(Math.abs(min), Math.abs(max), 1e-12)));
+    const h = (height - 14) * count / top;
+    context.fillRect(i * width / 24 + 1, height - 14 - h, width / 24 - 2, h);
+  });
+  context.fillStyle = getComputedStyle(document.body).color;
+  context.font = "10px system-ui";
+  context.fillText(format(min), 0, height - 2);
+  const label = format(max);
+  context.fillText(label, width - context.measureText(label).width, height - 2);
+  return canvas;
+}
+
+// A vector as a row of colored cells
+function strip(values, width, height = 14) {
+  const canvas = heatmap(values, 1, values.length, width, height);
+  canvas.style.height = height + "px";
+  canvas.style.width = width + "px";
+  return canvas;
+}
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// ---------- Forward pass ----------
+
+// The values of a vector as a grid of colored cells (an image when columns makes it square), with the value of a cell
+// on hover. label(i) names cell i in the tooltip.
+function cellGrid(values, { columns, cellSize = 14, maxWidth = 600, label = i => `#${i}`, max = maxAbs(values) } = {}) {
+  columns = columns || Math.max(1, Math.min(values.length, Math.floor(maxWidth / cellSize)));
+  const rows = Math.ceil(values.length / columns);
+  const gap = cellSize >= 8 ? 1 : 0;
+  const canvas = document.createElement("canvas");
+  const width = columns * cellSize, height = rows * cellSize;
+  const context = setupCanvas(canvas, width, height);
+  canvas.style.width = width + "px";
+
+  values.forEach((v, i) => {
+    context.fillStyle = rgb(divergingColor(v / max));
+    context.fillRect((i % columns) * cellSize, Math.floor(i / columns) * cellSize, cellSize - gap, cellSize - gap);
+  });
+
+  canvas.addEventListener("mousemove", event => {
+    const rect = canvas.getBoundingClientRect();
+    const i = Math.floor((event.clientY - rect.top) / cellSize) * columns + Math.floor((event.clientX - rect.left) / cellSize);
+    if (i >= 0 && i < values.length) showTooltip(event, `${label(i)}: ${format(values[i])}`);
+  });
+  canvas.addEventListener("mouseleave", hideTooltip);
+  return canvas;
+}
+
+// The color scale of a row: from -max (red) through 0 to +max (blue)
+function legend(max) {
+  const box = element("div", "legend");
+  box.appendChild(element("span", "", format(-max)));
+  const canvas = document.createElement("canvas");
+  const context = setupCanvas(canvas, 100, 8);
+  canvas.style.width = "100px";
+  for (let x = 0; x < 100; x++) {
+    context.fillStyle = rgb(divergingColor(x / 49.5 - 1));
+    context.fillRect(x, 0, 1, 8);
+  }
+  box.appendChild(canvas);
+  box.appendChild(element("span", "", "+" + format(max)));
+  return box;
+}
+
+// Bars, for the final outputs: from the left for non-negative values (e.g. probabilities), from the middle otherwise
+function bars(values, { probabilities = false } = {}) {
+  const max = probabilities ? 1 : maxAbs(values);
+  const signed = values.some(v => v < 0);
+  let best = 0;
+  values.forEach((v, i) => { if (v > values[best]) best = i; });
+  const box = element("div", "bars");
+  values.forEach((v, i) => {
+    const bar = element("div", "bar" + (i === best ? " best" : ""));
+    bar.appendChild(element("span", "", `#${i}`));
+    const track = element("div", "track");
+    const fill = element("div", "fill");
+    const fraction = Math.abs(v) / max;
+    fill.style.background = rgb(cssColor(v >= 0 ? "--positive" : "--negative"));
+    fill.style.width = (signed ? fraction * 50 : fraction * 100) + "%";
+    fill.style.left = !signed ? "0" : v >= 0 ? "50%" : (50 - fraction * 50) + "%";
+    track.appendChild(fill);
+    bar.appendChild(track);
+    bar.appendChild(element("span", "", probabilities ? (v * 100).toFixed(1) + "%" : format(v)));
+    box.appendChild(bar);
+  });
+  return box;
+}
+
+// A labeled vector of the forward pass: its name, its values and their color scale. width is the space it has.
+// max is the value with the strongest color (the largest magnitude, unless the scale is shared with another block).
+function vectorBlock(name, values, width, { label, asBars = false, image = false, probabilities = false, max = maxAbs(values) } = {}) {
+  const block = element("div", "vector");
+  const title = element("div", "name");
+  title.innerHTML = name;
+  block.appendChild(title);
+  const side = Math.round(Math.sqrt(values.length));
+
+  if (asBars) {
+    block.appendChild(bars(values, { probabilities }));
+  } else if (image && side * side === values.length && values.length >= 64) {
+    // An input whose size is a perfect square of at least 8 x 8 (e.g. 784 = 28 x 28) is probably an image
+    block.appendChild(cellGrid(values, { columns: side, cellSize: Math.max(2, Math.min(8, Math.floor(224 / side))), label, max }));
+    block.appendChild(legend(max));
+  } else {
+    block.appendChild(cellGrid(values, { maxWidth: width, cellSize: values.length > 512 ? 8 : 14, label, max }));
+    block.appendChild(legend(max));
+  }
+  return block;
+}
+
+// What the activation did to z, in words
+function activationNote(act_fn, z, output) {
+  const n = output.length;
+  if (act_fn === "relu") {
+    const active = output.filter(v => v > 0).length;
+    return `${active} of ${n} neurons active: the ReLU turned the ${n - active} negative values of z into 0`;
+  }
+  if (act_fn === "sigmoid") return "the sigmoid squashed each z into (0, 1)";
+  if (act_fn === "tanh") return "tanh squashed each z into (-1, 1)";
+  if (act_fn === "softmax") return "the softmax turned z into probabilities that add up to 1";
+  return "linear: the output is z itself";
+}
+
+function drawForward(model) {
+  const container = document.getElementById("forward");
+  container.innerHTML = "";
+  if (!model.activations) {
+    container.textContent = "No forward pass yet: it appears when the model predicts or trains.";
+    return;
+  }
+
+  const activations = model.activations.map(a => ({ inputs: decode(a.inputs), z: decode(a.z), output: decode(a.output) }));
+  const sample = Math.min(selectedSample, activations[0].inputs.shape[0] - 1);
+  const width = container.clientWidth - 26;  // inside the padding and border of a step
+  const half = (width - 20) / 2;             // z and the output of a layer side by side
+
+  const input = row(activations[0].inputs, sample);
+  const inputStep = element("div", "step");
+  inputStep.appendChild(element("h3", "", `Input: ${input.length} values`));
+  inputStep.appendChild(vectorBlock("<code>x</code>", input, width, { label: i => `input ${i}`, asBars: input.length <= 8, image: true }));
+  if (model.configs.normalization) {
+    inputStep.appendChild(element("div", "caption note", `after the ${model.configs.normalization} normalization of the model`));
+  }
+  container.appendChild(inputStep);
+
+  model.layers.forEach((layer, i) => {
+    const [neurons, inputs] = layer.weights.shape;
+    const source = i === 0 ? "x" : `h${i}`;
+    const connector = element("div", "connector");
+    connector.innerHTML = `<code>z = W${i + 1}&middot;${source} + b${i + 1}</code> &nbsp; W${i + 1}: ${neurons} x ${inputs} weights, ` +
+                          `b${i + 1}: ${neurons} biases`;
+    container.appendChild(connector);
+
+    const last = i === model.layers.length - 1;
+    const z = row(activations[i].z, sample), output = row(activations[i].output, sample);
+    const asBars = last && neurons <= 64;
+    // ReLU and linear keep the positive values of z as they are: with the same scale on both sides, they keep their color
+    const max = ["relu", "linear"].includes(layer.act_fn) ? maxAbs(z) : undefined;
+    const step = element("div", "step");
+    step.appendChild(element("h3", "", `Layer ${i + 1}: ${layer.act_fn}, ${neurons} neurons${last ? " (output)" : ""}`));
+
+    const pair = element("div", "pair");
+    pair.appendChild(vectorBlock("<code>z</code> (before the activation)", z, half, { label: j => `neuron ${j}, z`, asBars, max }));
+    pair.appendChild(vectorBlock(`<code>${last ? "output" : "h" + (i + 1)} = ${layer.act_fn}(z)</code>`, output, half, {
+      label: j => `neuron ${j}, output`, asBars, probabilities: layer.act_fn === "softmax", max,
+    }));
+    step.appendChild(pair);
+    step.appendChild(element("div", "caption note", activationNote(layer.act_fn, z, output)));
+    container.appendChild(step);
+  });
+}
+
+function showTooltip(event, text) {
+  const tooltip = document.getElementById("tooltip");
+  tooltip.textContent = text;
+  tooltip.style.display = "block";
+  tooltip.style.left = event.clientX + 14 + "px";
+  tooltip.style.top = event.clientY + 14 + "px";
+}
+
+function hideTooltip() {
+  document.getElementById("tooltip").style.display = "none";
+}
+
+// ---------- Counts over the captured samples ----------
+
+// out holds the outputs of a layer, one row per sample: the neurons that gave 0 for every sample (ReLU)
+function deadNeurons(out, neurons) {
+  let dead = 0;
+  for (let j = 0; j < neurons; j++) {
+    let fires = false;
+    for (let s = j; s < out.length; s += neurons) if (out[s] > 0) { fires = true; break; }
+    if (!fires) dead++;
+  }
+  return dead;
+}
+
+// The share of sigmoid or tanh outputs stuck near their limits, where the slope of the activation is almost 0
+function saturatedFraction(act_fn, out) {
+  let saturated = 0;
+  for (const v of out) saturated += act_fn === "tanh" ? Math.abs(v) > 0.98 : (v < 0.02 || v > 0.98);
+  return saturated / out.length;
+}
+
+// ---------- Layers ----------
+
+function drawLayers(model) {
+  const container = document.getElementById("layers");
+  container.innerHTML = "";
+  const width = container.clientWidth - 170;
+
+  model.layers.forEach((layer, i) => {
+    const weights = decode(layer.weights), biases = decode(layer.biases);
+    const [neurons, inputs] = weights.shape;
+    const card = element("div", "layer");
+    card.appendChild(element("h3", "", `Layer ${i + 1}: ${layer.act_fn}, ${inputs} inputs -> ${neurons} neurons (${neurons * inputs + neurons} parameters)`));
+
+    let mean = 0;
+    for (const v of weights.values) mean += v;
+    mean /= weights.values.length;
+    let variance = 0;
+    for (const v of weights.values) variance += (v - mean) ** 2;
+    const facts = [`weights mean ${format(mean)}, std ${format(Math.sqrt(variance / weights.values.length))}`];
+
+    if (model.gradient_norms) {
+      const [gw, gb] = model.gradient_norms[i];
+      facts.push(`gradient size: weights ${format(gw)}, biases ${format(gb)}`);
+    }
+
+    // Over the captured samples: ReLUs that never fire, or sigmoid/tanh outputs stuck near their limits
+    if (model.activations) {
+      const out = decode(model.activations[i].output).values;
+      if (layer.act_fn === "relu") {
+        facts.push(`ReLUs that never fired in these samples: ${deadNeurons(out, neurons)} of ${neurons}`);
+      } else if (layer.act_fn === "sigmoid" || layer.act_fn === "tanh") {
+        facts.push(`saturated outputs: ${percent(saturatedFraction(layer.act_fn, out))}`);
+      }
+    }
+    const info = element("div", "caption");
+    info.textContent = facts.join(" | ");
+    card.appendChild(info);
+
+    const figures = element("div", "figures");
+    const left = element("div");
+    left.appendChild(heatmap(weights.values, neurons, inputs, Math.max(120, width), 160));
+    left.appendChild(element("div", "caption", "weights: one row per neuron, one column per input"));
+    if (model.activations) {
+      const out = decode(model.activations[i].output);
+      left.appendChild(strip(row(out, Math.min(selectedSample, out.shape[0] - 1)), Math.max(120, width)));
+      left.appendChild(element("div", "caption", "output of each neuron for the selected sample"));
+    }
+    left.appendChild(strip(biases.values, Math.max(120, width)));
+    left.appendChild(element("div", "caption", "biases"));
+    figures.appendChild(left);
+
+    // When the inputs of the network form an image (e.g. 784 = 28 x 28 pixels), the weights of each neuron of the
+    // first layer, arranged the same way, show the pattern it responds to
+    const side = Math.round(Math.sqrt(inputs));
+    if (i === 0 && side * side === inputs && inputs >= 64 && neurons <= 256) {
+      const tiles = element("div");
+      tiles.style.cssText = "display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0 2px; grid-column: 1 / -1";
+      for (let j = 0; j < neurons; j++) {
+        const tile = heatmap(weights.values.subarray(j * inputs, (j + 1) * inputs), side, side, 40, 40);
+        tile.title = `neuron ${j}`;
+        tiles.appendChild(tile);
+      }
+      const block = element("div");
+      block.style.gridColumn = "1 / -1";
+      block.appendChild(tiles);
+      block.appendChild(element("div", "caption", `the weights of each neuron arranged as its ${side} x ${side} input: the pattern each neuron responds to (blue positive, red negative)`));
+      card.appendChild(block);
+    }
+
+    const right = element("div");
+    right.appendChild(histogram(weights.values, 150, 80));
+    right.appendChild(element("div", "caption", "distribution of the weights"));
+    figures.appendChild(right);
+    card.appendChild(figures);
+    container.appendChild(card);
+  });
+}
+
+// ---------- Summary: what the network does ----------
+
+const ACTIVATIONS = {
+  relu: ["ReLU", "keeps the positive values and turns the negative ones into 0"],
+  sigmoid: ["sigmoid", "squeezes each value between 0 and 1"],
+  tanh: ["tanh", "squeezes each value between -1 and 1"],
+  softmax: ["softmax", "turns the values into probabilities that add up to 100%"],
+  linear: ["linear", "passes the values on unchanged"],
+};
+
+function percent(v) {
+  return (100 * v).toFixed(1) + "%";
+}
+
+function meter(fraction) {
+  const box = element("div", "meter");
+  const fill = element("div");
+  fill.style.width = 100 * fraction + "%";
+  box.appendChild(fill);
+  return box;
+}
+
+function arrow(label, title) {
+  const box = element("div", "arrow");
+  box.appendChild(element("div", "line", "→"));
+  if (label) box.appendChild(element("div", "", label));
+  if (title) box.title = title;
+  return box;
+}
+
+// The row of the selected sample in an array of the forward pass
+function sampleRow(array) {
+  const values = decode(array);
+  return row(values, Math.min(selectedSample, (values.shape.length > 1 ? values.shape[0] : 1) - 1));
+}
+
+function inputBox(model) {
+  const box = element("div", "box");
+  box.appendChild(element("div", "kind", "Input"));
+  const rescaled = model.configs.normalization ? ", rescaled to a common range" : "";
+
+  if (!model.activations) {
+    box.appendChild(element("div", "big", String(model.layers[0].weights.shape[1])));
+    box.appendChild(element("div", "what", "values, once the model makes its first prediction"));
+    return box;
+  }
+
+  const input = sampleRow(model.activations[0].inputs);
+  const side = Math.round(Math.sqrt(input.length));
+  if (side * side === input.length && input.length >= 64) {
+    // A perfect square of at least 8 x 8 values (e.g. 784 = 28 x 28) is probably an image
+    box.appendChild(heatmap(input, side, side, 112, 112));
+    box.appendChild(element("div", "what", `${input.length} values: a ${side} x ${side} image${rescaled}`));
+  } else if (input.length <= 12) {
+    const list = element("div", "compact");
+    list.appendChild(bars(input));
+    box.appendChild(list);
+    box.appendChild(element("div", "what", `${input.length} values${rescaled}`));
+  } else {
+    box.appendChild(strip(input, 140));
+    box.appendChild(element("div", "what", `${input.length} values${rescaled}`));
+  }
+  return box;
+}
+
+function layerBox(model, i) {
+  const layer = model.layers[i];
+  const neurons = layer.weights.shape[0];
+  const last = i === model.layers.length - 1;
+  const box = element("div", "box");
+  box.appendChild(element("div", "kind", last ? "Output layer" : `Layer ${i + 1}`));
+  const big = element("div", "big", String(neurons));
+  big.appendChild(element("span", "unit", neurons === 1 ? " neuron" : " neurons"));
+  box.appendChild(big);
+
+  const [name, explanation] = ACTIVATIONS[layer.act_fn] || [layer.act_fn, ""];
+  box.appendChild(element("div", "", name));
+  box.appendChild(element("div", "what", explanation));
+
+  if (model.activations && layer.act_fn === "relu") {
+    const active = sampleRow(model.activations[i].output).filter(v => v > 0).length;
+    box.appendChild(meter(active / neurons));
+    box.appendChild(element("div", "what", `${active} of ${neurons} active for this input`));
+  }
+  return box;
+}
+
+function answerBox(model) {
+  const layer = model.layers[model.layers.length - 1];
+  const output = sampleRow(model.activations[model.activations.length - 1].output);
+  const order = [...output.keys()].sort((a, b) => output[b] - output[a]);
+  const box = element("div", "box answer");
+  box.appendChild(element("div", "kind", "Answer"));
+
+  if (layer.act_fn === "softmax" && output.length > 1) {
+    box.appendChild(element("div", "big", String(order[0])));
+    box.appendChild(element("div", "", `${percent(output[order[0]])} sure`));
+    box.appendChild(element("div", "what", `the most likely of ${output.length} options; next: ` +
+                                           order.slice(1, 3).map(i => `${i} (${percent(output[i])})`).join(", ")));
+  } else if (output.length === 1) {
+    const probability = layer.act_fn === "sigmoid";
+    box.appendChild(element("div", "big", probability ? percent(output[0]) : format(output[0])));
+    box.appendChild(element("div", "what", probability ? "the probability the network gives" : "the value the network predicts"));
+  } else if (output.length <= 12) {
+    const list = element("div", "compact");
+    list.appendChild(bars(output));
+    box.appendChild(list);
+    box.appendChild(element("div", "what", `one value per output; the largest is #${order[0]}`));
+  } else {
+    box.appendChild(strip(output, 140));
+    box.appendChild(element("div", "what", `${output.length} values; the largest is #${order[0]}`));
+  }
+  return box;
+}
+
+function drawPipeline(model) {
+  const container = document.getElementById("pipeline");
+  container.innerHTML = "";
+  container.appendChild(inputBox(model));
+
+  model.layers.forEach((layer, i) => {
+    const [neurons, inputs] = layer.weights.shape;
+    container.appendChild(arrow(`${(neurons * inputs).toLocaleString("en-US")} weights`,
+      "Every value on the left connects to every neuron on the right, and each connection has a weight that the training adjusts"));
+    container.appendChild(layerBox(model, i));
+  });
+
+  if (model.activations) {
+    container.appendChild(arrow());
+    container.appendChild(answerBox(model));
+  }
+
+  const parameters = model.layers.reduce((total, layer) => total + layer.weights.shape.reduce((a, b) => a * b) + layer.biases.shape[0], 0);
+  const training = model.updates
+    ? `${model.updates.toLocaleString("en-US")} training steps so far, each one nudging all of them.`
+    : "Not training: the numbers stay as they are, the model only makes predictions.";
+  document.getElementById("network-facts").textContent =
+    "Each neuron multiplies each of its inputs by a weight, adds the results and a bias, and passes the sum through its " +
+    `activation. The network has ${parameters.toLocaleString("en-US")} of these numbers (weights and biases), all learned. ${training}`;
+}
+
+// ---------- Is it learning? ----------
+
+// Known metric names: [title, what it means, which direction is better, shown as a percentage]
+const METRICS = {
+  loss: ["Training error (loss)", "How wrong the model is on the data it trains on. Lower is better.", "lower"],
+  val_loss: ["Validation error (val_loss)", "The same error on data the model never trains on. If it rises while the training error falls, the model is memorizing instead of learning.", "lower"],
+  val_accuracy: ["Validation accuracy", "The share of the validation samples the model gets right.", "higher", true],
+  total_reward: ["Reward per episode", "The points of each episode, while the agent still explores at random. Higher is better.", "higher"],
+  greedy_reward: ["Reward without exploring", "The points when the agent always takes the action it thinks is best. Higher is better.", "higher"],
+  mean_episode_reward: ["Mean reward per episode", "The average points of the episodes of this iteration. Higher is better.", "higher"],
+  reward: ["Reward per episode", "The points the agent got in each episode. Higher is better.", "higher"],
+  mean_q: ["Expected reward (mean Q)", "How many points the network expects to collect from each state on.", null],
+  epsilon: ["Exploration (epsilon)", "The chance of a random action. It falls on purpose as the agent learns.", null, true],
+  value_loss: ["Value error", "How wrong the value model is about the points to come. Lower is better.", "lower"],
+  entropy: ["Uncertainty of the choices (entropy)", "High while the policy still tries everything, lower as it becomes sure of its actions.", null],
+  clip_fraction: ["Held-back updates (clip fraction)", "The share of the samples where PPO held back a change of the policy that was too large.", null, true],
+};
+
+// -1 falling, 1 rising, 0 steady: the last fifth of the points against the fifth before it, relative to the range
+function trend(ys) {
+  if (ys.length < 4) return null;
+  const k = Math.max(2, Math.floor(ys.length / 5));
+  const mean = values => values.reduce((total, v) => total + v, 0) / values.length;
+  const range = Math.max(...ys) - Math.min(...ys);
+  if (!range) return 0;
+  const change = (mean(ys.slice(-k)) - mean(ys.slice(-2 * k, -k))) / range;
+  return Math.abs(change) < 0.03 ? 0 : Math.sign(change);
+}
+
+function trendText(direction, better) {
+  if (direction === null) return ["", ""];
+  if (direction === 0) return ["steady", ""];
+  const word = direction > 0 ? "rising" : "falling";
+  if (!better) return [word, ""];
+  const good = (direction > 0) === (better === "higher");
+  return [`${word}: ${good ? "improving" : "getting worse"}`, good ? "good" : "bad"];
+}
+
+// The validation error well above its lowest point while the training error keeps falling: overfitting
+function overfitting(metrics, axes) {
+  const validation = metrics.val_loss, training = metrics.loss;
+  if (!validation || !training || validation.length < 10 || trend(training.map(p => p[1])) > 0) return null;
+  let best = 0;
+  validation.forEach((p, i) => { if (p[1] < validation[best][1]) best = i; });
+  const [bestX, lowest] = validation[best];
+  const last = validation[validation.length - 1][1];
+  if (best >= validation.length - 3 || last < lowest * 1.15) return null;
+  const at = `${axes.val_loss || "point"} ${format(bestX)}`;
+  return `The validation error is ${Math.round(100 * (last / lowest - 1))}% above its lowest point (at ${at}) while the ` +
+         `training error keeps falling: the model has started to memorize the training data instead of learning what ` +
+         `generalizes (overfitting). It was at its best at ${at}.`;
+}
+
+function sparkline(points, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.style.width = width + "px";
+  const context = setupCanvas(canvas, width, height);
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+  const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs), yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const sx = x => 3 + (width - 6) * (xMax > xMin ? (x - xMin) / (xMax - xMin) : 0.5);
+  const sy = y => 3 + (height - 6) * (yMax > yMin ? 1 - (y - yMin) / (yMax - yMin) : 0.5);
+  context.strokeStyle = accent;
+  context.fillStyle = accent;
+  context.lineWidth = 1.5;
+  context.beginPath();
+  points.forEach(([x, y], i) => i ? context.lineTo(sx(x), sy(y)) : context.moveTo(sx(x), sy(y)));
+  context.stroke();
+  const [lastX, lastY] = points[points.length - 1];
+  context.beginPath();
+  context.arc(sx(lastX), sy(lastY), 2.5, 0, 2 * Math.PI);
+  context.fill();
+  return canvas;
+}
+
+function checkLine(ok, text) {
+  const line = element("div", "check");
+  line.appendChild(element("span", "icon " + (ok === null ? "info" : ok ? "ok" : "warn"), ok === null ? "•" : ok ? "✓" : "!"));
+  line.appendChild(element("span", "", text));
+  return line;
+}
+
+function drawLearning(metrics, axes) {
+  const container = document.getElementById("learning");
+  container.innerHTML = "";
+  const names = Object.keys(metrics);
+  if (!names.length) {
+    container.textContent = "Nothing yet: a training reports its numbers at the end of each epoch, episode or iteration.";
+    return;
+  }
+
+  const warning = overfitting(metrics, axes);
+  if (warning) container.appendChild(checkLine(false, warning));
+
+  names.forEach(name => {
+    const points = metrics[name], ys = points.map(p => p[1]);
+    const [title, explanation, better, isPercent] = METRICS[name] || [name, "", null, false];
+    const show = v => isPercent ? percent(v) : format(v);
+    const [word, tone] = trendText(trend(ys), better);
+
+    const item = element("div", "metric");
+    const text = element("div");
+    text.appendChild(element("div", "title", title));
+    const line = element("div");
+    line.appendChild(element("span", "value", show(ys[ys.length - 1])));
+    if (word) line.appendChild(element("span", tone, word));
+    if (points.length > 1) line.appendChild(element("span", "muted", ` (${show(ys[0])} at ${axes[name] || "the"} ${axes[name] ? format(points[0][0]) : "start"})`));
+    text.appendChild(line);
+    if (explanation) text.appendChild(element("div", "caption", explanation));
+    item.appendChild(text);
+    item.appendChild(sparkline(points, 180, 48));
+    container.appendChild(item);
+  });
+}
+
+// ---------- Health checks ----------
+
+const DEAD_LIMIT = 0.5;        // a warning when at least half of the ReLUs of a layer never fire...
+const SATURATED_LIMIT = 0.5;   // ...or half of the sigmoid or tanh outputs are stuck near their limits
+const MIN_SAMPLES = 8;         // with fewer samples, a ReLU that didn't fire says little
+
+function healthChecks(model) {
+  const checks = [];
+
+  const broken = model.layers.some(layer => [layer.weights, layer.biases].some(a => decode(a).values.some(v => !Number.isFinite(v))));
+  checks.push(broken
+    ? [false, "Some weights are no longer numbers (NaN or infinite): the training diverged. A smaller learning rate usually prevents it."]
+    : [true, "All the weights are valid numbers."]);
+
+  if (!model.gradient_norms) {
+    checks.push([null, "Not training: the weights don't change, so there is no training signal (gradient) to check."]);
+  } else {
+    // The size of the gradient of each layer: how strongly the last update pushed its weights
+    const norms = model.gradient_norms.map(([w, b]) => Math.hypot(w, b));
+    const largest = Math.max(...norms), smallest = Math.min(...norms);
+    if (norms.some(n => !Number.isFinite(n))) {
+      checks.push([false, "The gradients are not numbers: the training diverged."]);
+    } else if (largest > 1e3) {
+      checks.push([false, `Very large gradients (up to ${format(largest)}): the updates may overshoot. A smaller learning rate helps.`]);
+    } else if (largest < 1e-7) {
+      checks.push([false, "The gradients are practically 0: the weights barely change anymore."]);
+    } else if (smallest < largest * 1e-3) {
+      checks.push([false, `Layer ${norms.indexOf(smallest) + 1} gets a training signal over 1000 times weaker than the strongest ` +
+                          "layer, so it learns much more slowly (a vanishing gradient)."]);
+    } else {
+      checks.push([true, `The training signal (the gradient) reaches every layer, with sizes from ${format(smallest)} to ${format(largest)}.`]);
+    }
+  }
+
+  // The hidden layers, over the captured samples (in the output layer, values at the limits are just sure answers)
+  if (model.activations) {
+    model.layers.slice(0, -1).forEach((layer, i) => {
+      const out = decode(model.activations[i].output);
+      const [samples, neurons] = out.shape.length > 1 ? out.shape : [1, out.shape[0]];
+      const name = `Layer ${i + 1}`;
+
+      if (layer.act_fn === "relu" && samples >= MIN_SAMPLES) {
+        const dead = deadNeurons(out.values, neurons);
+        checks.push(dead / neurons >= DEAD_LIMIT
+          ? [false, `${name}: ${dead} of ${neurons} neurons gave 0 for all ${samples} inputs. A neuron that is always off stops learning (a "dead" ReLU).`]
+          : [true, `${name}: ${neurons - dead} of ${neurons} neurons respond to some of the ${samples} inputs` +
+                   (dead ? ` (the other ${dead} were off for all of them).` : ".")]);
+      } else if (layer.act_fn === "sigmoid" || layer.act_fn === "tanh") {
+        const fraction = saturatedFraction(layer.act_fn, out.values);
+        const limits = layer.act_fn === "tanh" ? "-1 or 1" : "0 or 1";
+        checks.push(fraction >= SATURATED_LIMIT
+          ? [false, `${name}: ${percent(fraction)} of the ${layer.act_fn} outputs are stuck near ${limits}. There the gradient is almost 0, so the layer learns slowly.`]
+          : [true, `${name}: the ${layer.act_fn} outputs stay away from their limits (${percent(fraction)} near ${limits}).`]);
+      }
+    });
+  }
+  return checks;
+}
+
+function drawHealth(model) {
+  const container = document.getElementById("health");
+  container.innerHTML = "";
+  healthChecks(model).forEach(([ok, text]) => container.appendChild(checkLine(ok, text)));
+}
+
+// ---------- Page ----------
+
+function render() {
+  if (!state || !state.models.length) return;
+  colorCache = {};  // the theme may have changed (light or dark)
+  if (!state.models.some(m => m.name === selectedModel)) selectedModel = state.models[0].name;
+  const model = state.models.find(m => m.name === selectedModel);
+
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  state.models.forEach(m => {
+    const button = element("button", m.name === selectedModel ? "active" : "", m.name);
+    button.onclick = () => { selectedModel = m.name; selectedSample = 0; render(); };
+    tabs.appendChild(button);
+  });
+
+  const parameters = model.layers.reduce((total, layer) => total + layer.weights.shape.reduce((a, b) => a * b) + layer.biases.shape[0], 0);
+  const info = document.getElementById("model-info");
+  info.innerHTML = "";
+  [`${model.layers.length} layers, ${parameters.toLocaleString()} parameters`,
+   `loss: ${model.configs.loss ?? "computed outside the model"}`, `optimizer: ${model.configs.optimizer}`,
+   `forward passes: ${model.forwards.toLocaleString()}`, `updates: ${model.updates.toLocaleString()}`,
+   `learning rate: ${format(model.learning_rate)}`].forEach(text => info.appendChild(element("span", "muted", text)));
+
+  // The samples kept from the last forward pass (the first rows of the batch)
+  const picker = document.getElementById("sample-picker");
+  const samples = model.activations ? decode(model.activations[0].inputs).shape[0] : 0;
+  if (samples > 1) {
+    selectedSample = Math.min(selectedSample, samples - 1);
+    if (!picker.querySelector("input") || +picker.querySelector("input").max !== samples - 1) {
+      picker.innerHTML = "";
+      const slider = element("input");
+      slider.type = "range"; slider.min = 0; slider.max = samples - 1; slider.value = selectedSample;
+      slider.oninput = () => { selectedSample = +slider.value; render(); };
+      picker.appendChild(document.createTextNode("Sample "));
+      picker.appendChild(slider);
+      picker.appendChild(element("span", "", ""));
+    }
+    picker.querySelector("span").textContent = ` ${selectedSample + 1} of ${samples} (first rows of the last batch)`;
+  } else {
+    picker.textContent = samples === 1 ? "1 sample in the last forward pass" : "";
+  }
+
+  drawPipeline(model);
+  drawLearning(state.metrics, state.axes || {});
+  drawHealth(model);
+
+  // The advanced section is drawn only while it is open
+  if (document.getElementById("advanced").open) {
+    drawForward(model);
+    drawLayers(model);
+  }
+}
+
+window.addEventListener("resize", render);
+document.getElementById("advanced").addEventListener("toggle", render);
+
+const status = document.getElementById("status");
+const events = new EventSource("/events");
+events.onmessage = message => {
+  state = JSON.parse(message.data);
+  status.textContent = "live";
+  status.className = "live";
+  render();
+};
+events.onerror = () => {
+  status.textContent = "disconnected: the script ended or was stopped (showing the last state)";
+  status.className = "lost";
+};
+</script>
+</body>
+</html>

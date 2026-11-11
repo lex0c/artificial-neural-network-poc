@@ -203,6 +203,9 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
                 if checkpoint_filepath:
                     model.save(checkpoint_filepath)
 
+        model.notify("on_metrics", {'episode': e + 1, 'total_reward': total_reward, 'greedy_reward': greedy_reward,
+                                    'mean_q': mean_q, 'loss': loss, 'epsilon': epsilon})
+
         if metrics_filepath:
             write_to_csv(metrics_filepath, {
                 'metrics_key': metrics_key,

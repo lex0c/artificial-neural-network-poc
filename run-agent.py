@@ -4,7 +4,7 @@ import sys
 import gymnasium as gym
 import numpy as np
 
-from cli import load_trained_model
+from cli import add_dashboard_option, keep_dashboard_open, load_trained_model, start_dashboard
 
 
 # Watches a trained agent play with the greedy policy: the action with the highest output of the model, which is the
@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser(description="Watches a trained agent play with 
 parser.add_argument("environment", help="Gymnasium environment, e.g. CartPole-v1 or Acrobot-v1")
 parser.add_argument("model", help="model file, e.g. models/cartpole.joblib")
 parser.add_argument("--episodes", type=int, default=10, help="number of episodes (default: 10)")
+add_dashboard_option(parser)
 args = parser.parse_args()
 
 model = load_trained_model(args.model, "train-cartpole.py, or another train-*.py script")
@@ -32,6 +33,7 @@ if (num_inputs, num_outputs) != (state_size, num_actions):
              f"{state_size} numbers and {num_actions} actions: it was trained for another environment")
 
 model.summary()
+monitor = start_dashboard(args.dashboard, {"agent": model})
 
 for e in range(args.episodes):
     state, _ = env.reset()
@@ -46,5 +48,7 @@ for e in range(args.episodes):
             break
 
     print(f"Episode {e+1}/{args.episodes} - reward {total_reward:.0f}")
+    model.notify("on_metrics", {"episode": e + 1, "reward": total_reward})
 
 env.close()
+keep_dashboard_open(monitor)

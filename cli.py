@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import time
 
 from feedforward import load_model
 from progress import display_path
@@ -30,7 +31,51 @@ def training_args(description, render=False, **length):
     for name, default in length.items():
         parser.add_argument(f"--{name}", type=int, default=default, help=f"number of {name} (default: {default})")
 
+    add_dashboard_option(parser)
     return parser.parse_args()
+
+
+# The options of the scripts that use a trained model: --dashboard (and --help)
+def run_args(description):
+    parser = argparse.ArgumentParser(description=description)
+    add_dashboard_option(parser)
+    return parser.parse_args()
+
+
+def add_dashboard_option(parser):
+    parser.add_argument("--dashboard", action="store_true",
+                        help="show the model live in the browser: its layers, weights, activations and metrics")
+
+
+# With --dashboard, starts the dashboard (dashboard.py) for the models given as {name: model} and returns its monitor;
+# otherwise returns None and changes nothing.
+def start_dashboard(enabled, models):
+    if not enabled:
+        return None
+
+    from dashboard import Dashboard
+    from monitor import Monitor
+
+    monitor = Monitor()
+    for name, model in models.items():
+        monitor.attach(model, name)
+
+    print(f"Dashboard: {Dashboard(monitor).start()} (open it in the browser)")
+    return monitor
+
+
+# Keeps the dashboard open when the script is done, to explore its last state, until Ctrl+C.
+def keep_dashboard_open(monitor):
+    if monitor is None:
+        return
+
+    print("The dashboard stays open with the last state: press Ctrl+C to exit")
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print()
 
 
 # Loads a model, or explains how to create it when the file doesn't exist.

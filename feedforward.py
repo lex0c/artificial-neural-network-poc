@@ -55,6 +55,13 @@ class FeedForward:
         self.optimizer = make_optimizer(self.configs.get("optimizer", "sgd"))  # applies the gradients (see update)
         self.cache = []    # inputs, z and output of each layer in the last forward pass, used by backward()
         self.history = {}  # loss of each epoch in the last train()
+        self.observers = []  # objects told about each forward pass, update and metric (see monitor.py)
+
+    # Tells the observers about an event: on_forward(model), on_update(model, gradients, learning_rate) or
+    # on_metrics(model, values). Without observers it does nothing.
+    def notify(self, event, *args):
+        for observer in self.observers:
+            getattr(observer, event)(self, *args)
 
     def add_layer(self, num_inputs, num_neurons, act_fn):
         if act_fn not in ACTIVATIONS:
@@ -121,6 +128,7 @@ class FeedForward:
             z, values = layer_forward(inputs, layer["weights"], layer["biases"], layer["act_fn"])
             self.cache.append({"inputs": inputs, "z": z, "output": values})
 
+        self.notify("on_forward")
         return values
 
     # Trains with mini-batch gradient descent.
@@ -170,6 +178,10 @@ class FeedForward:
                 summary += f" - val_loss {format_number(val_loss)}"
                 if val_accuracy is not None:
                     summary += f" - val_accuracy {val_accuracy:.4f}"
+
+            self.notify("on_metrics", {"epoch": epoch + 1, "loss": self.history["loss"][-1],
+                                       "val_loss": self.history["val_loss"][-1] if validation_data is not None else None,
+                                       "val_accuracy": self.history["val_accuracy"][-1] if validation_data is not None else None})
 
             if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs):
                 summary += f" - {timing(start_time, epoch + 1, epochs)}"
@@ -252,6 +264,7 @@ class FeedForward:
     # The optimizer decides the exact step: proportional to the gradient (SGD), or adapted to each parameter (Adam).
     def update(self, gradients, learning_rate):
         self.optimizer.update(self.layers, gradients, learning_rate)
+        self.notify("on_update", gradients, learning_rate)
 
     def summary(self):
         print()

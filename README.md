@@ -27,7 +27,9 @@ python -m unittest -v   # optional: checks that everything works
    - [DQN.md](DQN.md) and `dqn.py`: a Deep Q-Network, which learns the value of each action.
    - [PPO.md](PPO.md) and `ppo.py`: Proximal Policy Optimization, which learns the policy directly.
    - `rl.py`: the evaluation and metrics shared by both.
-5. **The tests**: `test_feedforward.py` checks backpropagation against gradients measured numerically,
+5. **The dashboard** (optional): `monitor.py` keeps a picture of the models while they train or run, `dashboard.py`
+   serves it to the browser, and `dashboard.html` draws it (see "Watching a model live" below).
+6. **The tests**: `test_feedforward.py` checks backpropagation against gradients measured numerically,
    `test_dqn.py` computes DQN and Double DQN targets on a tiny example you can follow by hand, and `test_ppo.py`
    checks the PPO gradient numerically and computes advantages by hand.
 
@@ -101,3 +103,31 @@ environments that can be shown, `--render` to watch the training (much slower):
 python train-cartpole.py --seed 0 --episodes 300
 python train-acrobot-ppo.py --render
 ```
+
+## Watching a model live
+
+Every `train` and `run` script takes `--dashboard`, which opens a page at http://localhost:8000 (or the next free
+port) that follows the model while it works:
+
+```sh
+python train-mnist.py --dashboard
+python run-agent.py CartPole-v1 models/cartpole-ppo.joblib --dashboard
+```
+
+The page has three parts:
+
+- **What the network does**: the input, the layers and the answer for one input, in plain words. For example, the
+  image of a digit, how many neurons of the hidden layer it activates, and the digit the network answers with how
+  sure it is.
+- **Is it learning?**: the metrics the training reports, whether each one is improving, and what it means. It warns
+  when the validation error rises while the training error keeps falling (overfitting).
+- **Health checks**: weights that are no longer numbers, gradients that vanish or explode, ReLUs that never fire, and
+  sigmoid or tanh outputs stuck at their limits.
+
+"Inside the layers (advanced)" shows every value of the forward pass and every weight. The page only shows: it
+doesn't change the model or the training. When the script ends, the page stays open with the last state until
+Ctrl+C.
+
+It works with any `FeedForward` model, whatever it does: the model tells its observers about each forward pass,
+update and metric (`notify` in `feedforward.py`), and `monitor.py` keeps a copy at most every 0.1 s, so watching a
+training barely slows it down (MNIST trains about 7% slower with the page open). The server only listens on this machine and uses only the standard library.

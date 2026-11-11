@@ -1,4 +1,4 @@
-from cli import display_path, project_path, training_args
+from cli import keep_dashboard_open, start_dashboard, display_path, project_path, training_args
 from data import set_seed, to_categorical
 from feedforward import FeedForward
 from weather import CLASS_NAMES, generate_weather_dataset
@@ -29,6 +29,7 @@ model.add_layer(num_inputs=16, num_neurons=len(CLASS_NAMES), act_fn='softmax')  
 model.configure(loss='categorical_crossentropy')
 model.fit_normalization(features)  # the features have different scales (humidity goes up to 100, wind up to 25)
 model.summary()
+monitor = start_dashboard(args.dashboard, {"weather classifier": model})
 
 # Inputs scaled to [0, 1] give small gradients, so the learning rate can be larger. log_every=10: a line every 10 epochs
 model.train(features, labels_one_hot, epochs=args.epochs, learning_rate=0.1, verbose=True,
@@ -42,3 +43,4 @@ print(f"Test Loss: {test_loss:.4f}")
 model_filepath = project_path('models', 'weather.joblib')
 model.save(model_filepath)
 print(f"Model saved to {display_path(model_filepath)}")
+keep_dashboard_open(monitor)
