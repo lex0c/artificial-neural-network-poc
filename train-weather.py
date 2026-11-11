@@ -1,7 +1,11 @@
 import numpy as np
 
 from feedforward import FeedForward
-from etc import to_categorical
+from etc import to_categorical, set_seed
+
+
+SEED = None  # set an integer (e.g. 0) to make the run reproducible
+set_seed(SEED)
 
 
 def generate_weather_dataset(num_samples=10):

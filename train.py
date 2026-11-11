@@ -1,6 +1,11 @@
 import numpy as np
 
 from feedforward import FeedForward
+from etc import set_seed
+
+
+SEED = None  # set an integer (e.g. 0) to make the run reproducible
+set_seed(SEED)
 
 
 # Y = 2X - 1

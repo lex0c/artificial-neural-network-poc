@@ -288,6 +288,17 @@ def normalize_gradients(gradients):
     return gradients
 
 
+# Seeds the random number generators used in training (NumPy, Python's random and, optionally, a Gymnasium
+# environment and its action space), so a run can be reproduced. With seed=None every run is different.
+def set_seed(seed, env=None):
+    np.random.seed(seed)
+    random.seed(seed)
+
+    if env is not None:
+        env.reset(seed=seed)
+        env.action_space.seed(seed)
+
+
 # Spliting a dataset into smaller chunks.
 def create_batches(inputs, targets, batch_size):
     for i in range(0, len(inputs), batch_size):

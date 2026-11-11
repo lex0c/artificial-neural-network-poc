@@ -2,10 +2,13 @@ import gymnasium as gym
 
 from feedforward import load_model, clone_model
 from dqn import train_dqn
+from etc import set_seed
 
+
+SEED = None  # set an integer (e.g. 0) to make the run reproducible
 
 env = gym.make("CartPole-v1", render_mode="human")
-env.reset()
+set_seed(SEED, env)
 
 
 model = load_model('models/cartpole.joblib')

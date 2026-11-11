@@ -5,9 +5,10 @@ import unittest
 from contextlib import redirect_stdout
 
 import numpy as np
+from joblib import load
 
 from feedforward import FeedForward, load_model, clone_model
-from etc import loss_fn, to_categorical
+from etc import loss_fn, to_categorical, set_seed
 
 
 NUM_SAMPLES = 5
@@ -185,6 +186,38 @@ class FeedForwardTest(unittest.TestCase):
 
         self.assertAlmostEqual(sparse_loss, one_hot_loss)
         self.assertAlmostEqual(sparse_accuracy, one_hot_accuracy)
+
+
+class SaveAndSeedTest(unittest.TestCase):
+    def test_save_keeps_only_the_parameters(self):
+        np.random.seed(0)
+        model = build_model("relu", "linear", "mse")
+        inputs = np.random.normal(0, 1, (500, NUM_INPUTS))
+        expected = model.predict(inputs)  # leaves the activations of a 500-sample batch in the layers
+
+        with tempfile.TemporaryDirectory() as directory:
+            filepath = os.path.join(directory, "model.joblib")
+            model.save(filepath)
+            saved_layers = load(filepath)["layers"]
+            loaded = load_model(filepath)
+
+        self.assertEqual([sorted(layer) for layer in saved_layers], [["act_fn", "biases", "weights"]] * 2)
+        np.testing.assert_allclose(loaded.predict(inputs), expected)
+
+    def test_same_seed_gives_the_same_training(self):
+        def train_with_seed(seed):
+            set_seed(seed)
+            model = build_model("relu", "linear", "mse")
+            inputs = np.random.normal(0, 1, (20, NUM_INPUTS))
+            targets = np.random.normal(0, 1, (20, NUM_OUTPUTS))
+
+            with redirect_stdout(io.StringIO()):
+                model.train(inputs, targets, epochs=2, learning_rate=0.01, batch_size=8)
+
+            return model.layers[0]["weights"]
+
+        np.testing.assert_array_equal(train_with_seed(7), train_with_seed(7))
+        self.assertFalse(np.array_equal(train_with_seed(7), train_with_seed(8)))
 
 
 class NormalizationTest(unittest.TestCase):

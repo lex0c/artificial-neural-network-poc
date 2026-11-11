@@ -281,7 +281,10 @@ class FeedForward:
         return loss, accuracy
 
     def save(self, filepath):
-        dump({"layers": self.layers, "configs": self.configs}, filepath)
+        # Only the parameters: the activations of the last forward pass ("z" and "output") aren't needed to use the
+        # model, and their size depends on whatever batch ran last
+        layers = [{"weights": l["weights"], "biases": l["biases"], "act_fn": l["act_fn"]} for l in self.layers]
+        dump({"layers": layers, "configs": self.configs}, filepath)
 
     def get_layers(self):
         return copy.deepcopy(self.layers)
