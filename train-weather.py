@@ -45,9 +45,10 @@ model = FeedForward()
 model.add_layer(num_inputs=features.shape[1], num_neurons=16, act_fn='relu')
 model.add_layer(num_inputs=16, num_neurons=len(labels_raw), act_fn='softmax')
 model.configure(loss='categorical_crossentropy')
+model.fit_normalization(features)  # saved with the model, so run-weather.py scales its inputs the same way
 model.summary()
 
-model.train(features, labels_normalized, epochs=100, learning_rate=0.001, use_granular_update=True, verbose=True)
+model.train(features, labels_normalized, epochs=100, learning_rate=0.1, use_granular_update=True, verbose=True)
 
 test_loss, test_accuracy = model.evaluate(test_features, test_labels_normalized)
 

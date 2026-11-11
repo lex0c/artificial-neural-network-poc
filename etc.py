@@ -98,13 +98,23 @@ def activation_backward(fn, z, output, grad):
     return grad * activation_derivative_fn(fn, z)
 
 
-# Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a 
+# Min-Max Scaling is a normalization technique that transforms features by scaling each feature to a
 # specific range, usually [0, 1] or [-1, 1].
 def normalize_minmax(data):
-    min_vals = np.min(data, axis=0)
-    max_vals = np.max(data, axis=0)
+    return apply_minmax(data, *minmax_stats(data))
 
-    return (data - min_vals) / (max_vals - min_vals)
+
+# Returns the minimum and maximum of each feature (column), to scale other data the same way later.
+def minmax_stats(data):
+    data = np.asarray(data, dtype=float)
+    return np.min(data, axis=0), np.max(data, axis=0)
+
+
+# Scales each feature to [0, 1] using the given minimum and maximum. Values outside the original range
+# (e.g. new data) land outside [0, 1], which is expected.
+def apply_minmax(data, min_vals, max_vals):
+    value_range = np.where(max_vals > min_vals, max_vals - min_vals, 1.0)  # a constant feature would divide by 0
+    return (np.asarray(data, dtype=float) - min_vals) / value_range
 
 
 # This function is responsible for converting an element into a "one-hot encode" representation. 

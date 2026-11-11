@@ -4,7 +4,7 @@ import copy
 import numpy as np
 from joblib import dump, load
 
-from etc import activation_fn, activation_backward, loss_fn, loss_derivative_fn, clip_gradients, normalize_gradients, create_batches, softmax_crossentropy_delta, is_softmax_crossentropy
+from etc import activation_fn, activation_backward, loss_fn, loss_derivative_fn, clip_gradients, normalize_gradients, create_batches, softmax_crossentropy_delta, is_softmax_crossentropy, minmax_stats, apply_minmax
 
 
 def layer(values, weights, biases, act_fn):
@@ -53,8 +53,27 @@ class FeedForward:
     def configure(self, loss):
         self.configs["loss"] = loss
 
-    def forward(self, input_values, verbose=False):
+    # Fits min-max scaling to the training inputs. It is stored in the configs, so it is saved with the model
+    # and every input (in train, predict and evaluate) is scaled with the same values, including after loading.
+    def fit_normalization(self, inputs):
+        min_vals, max_vals = minmax_stats(inputs)
+        self.configs["normalization"] = {"method": "minmax", "min": min_vals, "max": max_vals}
+
+    # Applies the fitted normalization, if any (models without it receive the inputs unchanged).
+    def normalize(self, input_values):
         values = np.asarray(input_values, dtype=float)
+        normalization = self.configs.get("normalization")
+
+        if normalization is None:
+            return values
+
+        return apply_minmax(values, normalization["min"], normalization["max"])
+
+    def forward(self, input_values, verbose=False):
+        return self.forward_layers(self.normalize(input_values), verbose)
+
+    # Forward pass over inputs that are already normalized
+    def forward_layers(self, values, verbose=False):
         layer_size = len(self.layers)
 
         for i, layer_param in enumerate(self.layers):
@@ -72,7 +91,8 @@ class FeedForward:
         self.learning_rate = learning_rate
         total_loss = 0
 
-        inputs = np.asarray(inputs, dtype=float)
+        # Normalized once for the whole dataset; the backward pass needs the same normalized inputs as the forward pass
+        inputs = self.normalize(inputs)
         targets = np.asarray(targets)
         num_batches = math.ceil(len(inputs) / batch_size)  # the last batch may be smaller
 
@@ -80,7 +100,7 @@ class FeedForward:
             epoch_loss = 0
 
             for batch_count, (batch_inputs, batch_targets) in enumerate(create_batches(inputs, targets, batch_size), start=1):
-                predictions = self.forward(batch_inputs)
+                predictions = self.forward_layers(batch_inputs)
 
                 # Calculates the mean loss of the batch
                 batch_loss = loss_fn(self.configs["loss"], batch_targets, predictions)
@@ -236,6 +256,9 @@ class FeedForward:
 
         print(f"Total Parameters: {total_params}")
         print(f"Loss Function: {self.configs['loss']}")
+
+        if "normalization" in self.configs:
+            print(f"Input Normalization: {self.configs['normalization']['method']}")
         print("\n")
 
     def evaluate(self, test_inputs, test_labels):

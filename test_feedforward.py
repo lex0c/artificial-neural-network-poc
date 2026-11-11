@@ -1,10 +1,12 @@
 import io
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 
 import numpy as np
 
-from feedforward import FeedForward
+from feedforward import FeedForward, load_model, clone_model
 from etc import loss_fn, to_categorical
 
 
@@ -96,15 +98,32 @@ class GradientCheckTest(unittest.TestCase):
                     inputs = rng.normal(0, 1, (NUM_SAMPLES, NUM_INPUTS))
                     targets = make_targets(loss, output_act, rng)
 
-                    expected = numerical_gradients(model, inputs, targets)
-                    actual = applied_gradients(model, inputs, targets, use_granular_update)
+                    self.assert_gradients_match(model, inputs, targets, use_granular_update)
 
-                    for layer_index, (exp, act) in enumerate(zip(expected, actual)):
-                        for key in ("weights", "biases"):
-                            np.testing.assert_allclose(
-                                act[key], exp[key], rtol=1e-4, atol=1e-8,
-                                err_msg=f"layer {layer_index + 1} {key}",
-                            )
+    def test_backpropagation_with_input_normalization(self):
+        # Unscaled inputs: the backward pass must use the same normalized inputs as the forward pass
+        for use_granular_update in (False, True):
+            with self.subTest(granular=use_granular_update):
+                np.random.seed(0)
+                rng = np.random.default_rng(4)
+
+                model = build_model("relu", "linear", "mse")
+                inputs = rng.normal(0, 1, (NUM_SAMPLES, NUM_INPUTS)) * [50.0, 1.0, 0.1] + [100.0, 0.0, -3.0]
+                targets = rng.normal(0, 1, (NUM_SAMPLES, NUM_OUTPUTS))
+                model.fit_normalization(inputs)
+
+                self.assert_gradients_match(model, inputs, targets, use_granular_update)
+
+    def assert_gradients_match(self, model, inputs, targets, use_granular_update):
+        expected = numerical_gradients(model, inputs, targets)
+        actual = applied_gradients(model, inputs, targets, use_granular_update)
+
+        for layer_index, (exp, act) in enumerate(zip(expected, actual)):
+            for key in ("weights", "biases"):
+                np.testing.assert_allclose(
+                    act[key], exp[key], rtol=1e-4, atol=1e-8,
+                    err_msg=f"layer {layer_index + 1} {key}",
+                )
 
 
 class FeedForwardTest(unittest.TestCase):
@@ -166,6 +185,37 @@ class FeedForwardTest(unittest.TestCase):
 
         self.assertAlmostEqual(sparse_loss, one_hot_loss)
         self.assertAlmostEqual(sparse_accuracy, one_hot_accuracy)
+
+
+class NormalizationTest(unittest.TestCase):
+    def test_inputs_are_scaled_with_the_training_range(self):
+        model = FeedForward()
+        model.fit_normalization([[0.0, 10.0], [4.0, 30.0]])
+
+        np.testing.assert_allclose(model.normalize([[2.0, 10.0], [8.0, 40.0]]), [[0.5, 0.0], [2.0, 1.5]])
+
+    def test_constant_feature_does_not_divide_by_zero(self):
+        model = FeedForward()
+        model.fit_normalization([[1.0, 5.0], [3.0, 5.0]])
+
+        np.testing.assert_allclose(model.normalize([[2.0, 5.0]]), [[0.5, 0.0]])
+
+    def test_models_without_normalization_receive_the_inputs_unchanged(self):
+        np.testing.assert_allclose(FeedForward().normalize([[100.0, -3.0]]), [[100.0, -3.0]])
+
+    def test_normalization_is_saved_with_the_model(self):
+        np.random.seed(0)
+        model = build_model("relu", "softmax", "categorical_crossentropy")
+        model.fit_normalization(np.random.uniform(-5, 100, (20, NUM_INPUTS)))
+        raw_inputs = np.array([[20.0, 70.0, 5.0], [-3.0, 90.0, 12.0]])
+
+        with tempfile.TemporaryDirectory() as directory:
+            filepath = os.path.join(directory, "model.joblib")
+            model.save(filepath)
+            loaded = load_model(filepath)
+
+        np.testing.assert_allclose(loaded.predict(raw_inputs), model.predict(raw_inputs))
+        np.testing.assert_allclose(clone_model(model).predict(raw_inputs), model.predict(raw_inputs))
 
 
 if __name__ == "__main__":

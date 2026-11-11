@@ -24,6 +24,19 @@ model.summary()
 - **sparse_categorical_crossentropy**: Computes the cross-entropy loss for each sample. It’s more memory efficient than categorical crossentropy because it does not require one-hot encoding of the labels.
 - **categorical_crossentropy**: Measures the cross-entropy loss between the true labels (one-hot encoded) and the predicted probabilities. It penalizes incorrect classifications by considering the predicted probability of the true class.
 
+### Normalize Inputs
+
+Features with very different scales (e.g. temperature and humidity) slow down or stall the training. Fit a min-max
+normalization to the training inputs before training:
+
+```python
+model.fit_normalization(inputs)
+```
+
+It is stored in the model configs, so `train`, `predict` and `evaluate` scale every input with the same training
+range, and it is saved and loaded with the model. Pass the raw inputs everywhere. With inputs scaled to `[0, 1]`
+the gradients are smaller, so a larger learning rate is usually needed.
+
 ### Train the Model
 
 Provide training data and target values to train the network:
