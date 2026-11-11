@@ -6,6 +6,8 @@ This framework is designed for educational and prototyping purposes.
 
 ## Run
 
+Requires Python 3.12 or newer.
+
 ```sh
 pip install -r requirements.txt
 ```
@@ -53,7 +55,7 @@ python show-cartpole-metrics.py
 
 ## Tests
 
-Checks the backpropagation against numerical gradients, among other things:
+Checks the backpropagation against numerical gradients, among other things. They also run on GitHub Actions for every pull request:
 
 ```sh
 python -m unittest -v
