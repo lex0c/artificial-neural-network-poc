@@ -7,10 +7,11 @@ from contextlib import redirect_stdout
 import numpy as np
 from joblib import load
 
-from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax
+from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax, tanh, tanh_derivative
 from data import set_seed, to_categorical
 from feedforward import FeedForward, load_model, clone_model
 from losses import loss_derivative_fn, loss_fn, softmax_crossentropy_delta
+from optimizers import Adam, SGD
 
 
 NUM_SAMPLES = 5
@@ -90,6 +91,7 @@ class GradientCheckTest(unittest.TestCase):
     CASES = [
         ("relu", "linear", "mse"),
         ("relu", "sigmoid", "mse"),
+        ("tanh", "linear", "mse"),
         ("relu", "softmax", "mse"),  # backpropagates through the softmax Jacobian
         ("sigmoid", "softmax", "categorical_crossentropy"),  # softmax + cross-entropy shortcut
         ("relu", "softmax", "sparse_categorical_crossentropy"),
@@ -281,6 +283,8 @@ class KnownValuesTest(unittest.TestCase):
         np.testing.assert_allclose(sigmoid_derivative([0.0, np.log(3)]), [0.25, 0.1875])
         np.testing.assert_allclose(relu([-2.0, 0.0, 3.0]), [0.0, 0.0, 3.0])
         np.testing.assert_allclose(relu_derivative([-2.0, 0.0, 3.0]), [0, 0, 1])
+        np.testing.assert_allclose(tanh([0.0, np.log(3)]), [0.0, 0.8])          # tanh(ln 3) = (9 - 1) / (9 + 1)
+        np.testing.assert_allclose(tanh_derivative([0.0, np.log(3)]), [1.0, 0.36])  # 1 - tanh^2
 
     def test_mse(self):
         # ((1 - 1.5)^2 + (2 - 2.5)^2 + (0 - 1)^2 + (4 - 4)^2) / 4 = 0.375
@@ -340,6 +344,78 @@ class WorkedExampleTest(unittest.TestCase):
         model.layers[0]["biases"][:] = 0.0
         self.assertAlmostEqual(model.train_step(x, y, learning_rate=0.01), 12.25)
         np.testing.assert_allclose(model.layers[0]["weights"], [[0.71]])
+
+
+class OptimizerTest(unittest.TestCase):
+    def one_parameter(self):
+        return [{"weights": np.array([[1.0]]), "biases": np.array([0.0])}]
+
+    def test_adam_steps_by_hand(self):
+        # Gradients 2 and then 4, learning rate 0.1, beta1 0.9, beta2 0.999:
+        #   t=1: m = 0.2, v = 0.004, corrected m = 2, v = 4: the step is 0.1 * 2 / sqrt(4) = 0.1
+        #   t=2: m = 0.58, v = 0.019996, corrected m = 3.0526, v = 10.003: the step is 0.1 * 3.0526 / 3.1628 = 0.0965
+        layers = self.one_parameter()
+        adam = Adam()
+
+        adam.update(layers, [(np.array([[2.0]]), np.array([2.0]))], learning_rate=0.1)
+        np.testing.assert_allclose(layers[0]["weights"], [[0.9000000005]], rtol=1e-12)
+
+        adam.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
+        np.testing.assert_allclose(layers[0]["weights"], [[0.8034817982229947]], rtol=1e-12)
+
+    def test_first_adam_step_doesnt_depend_on_the_gradient_scale(self):
+        # SGD moves each parameter in proportion to its gradient; the first Adam step is about the learning rate
+        gradients = [(np.array([[1e-4, 1e3]]), np.array([-5.0]))]
+
+        sgd_layers = [{"weights": np.zeros((1, 2)), "biases": np.zeros(1)}]
+        SGD().update(sgd_layers, gradients, learning_rate=0.01)
+        np.testing.assert_allclose(sgd_layers[0]["weights"], [[-1e-6, -10.0]])
+
+        adam_layers = [{"weights": np.zeros((1, 2)), "biases": np.zeros(1)}]
+        Adam().update(adam_layers, gradients, learning_rate=0.01)
+        np.testing.assert_allclose(adam_layers[0]["weights"], [[-0.01, -0.01]], rtol=1e-3)
+        np.testing.assert_allclose(adam_layers[0]["biases"], [0.01], rtol=1e-6)
+
+    def test_adam_state_carries_over_between_train_calls(self):
+        rng = np.random.default_rng(10)
+        inputs = rng.normal(0, 1, (8, NUM_INPUTS))
+        targets = rng.normal(0, 1, (8, NUM_OUTPUTS))
+
+        def trained(calls, reconfigure=False):
+            np.random.seed(0)
+            model = build_model("relu", "linear", "mse")
+            model.configure(loss="mse", optimizer="adam")
+
+            with redirect_stdout(io.StringIO()):
+                for epochs in calls:
+                    if reconfigure:
+                        model.configure(loss="mse", optimizer="adam")  # starts a new optimizer
+                    model.train(inputs, targets, epochs=epochs, learning_rate=0.01, batch_size=4, shuffle=False)
+
+            return model.layers[0]["weights"]
+
+        np.testing.assert_allclose(trained([1, 1]), trained([2]), rtol=1e-12)
+        self.assertFalse(np.allclose(trained([1, 1], reconfigure=True), trained([2]), rtol=1e-12))
+
+    def test_optimizer_is_saved_with_the_model(self):
+        np.random.seed(0)
+        model = build_model("relu", "linear", "mse")
+        model.configure(loss="mse", optimizer="adam")
+
+        with tempfile.TemporaryDirectory() as directory:
+            filepath = os.path.join(directory, "model.joblib")
+            model.save(filepath)
+            loaded = load_model(filepath)
+
+        self.assertEqual(loaded.configs["optimizer"], "adam")
+        self.assertIsInstance(loaded.optimizer, Adam)
+        self.assertEqual(loaded.optimizer.t, 0)  # the averages of the gradients aren't saved
+
+    def test_models_without_an_optimizer_use_sgd(self):
+        self.assertIsInstance(FeedForward().optimizer, SGD)
+
+        with self.assertRaises(ValueError):
+            FeedForward().configure(loss="mse", optimizer="rmsprop")
 
 
 class MetricsTest(unittest.TestCase):

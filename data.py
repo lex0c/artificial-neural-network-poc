@@ -33,11 +33,11 @@ def apply_minmax(data, min_vals, max_vals):
     return (np.asarray(data, dtype=float) - min_vals) / value_range
 
 
-# Splits a dataset into consecutive batches of batch_size samples (the last one is smaller if the size doesn't
-# divide evenly).
-def create_batches(inputs, targets, batch_size):
-    for i in range(0, len(inputs), batch_size):
-        yield inputs[i:i + batch_size], targets[i:i + batch_size]
+# Splits a sequence (in train(), the order of the samples in an epoch) into consecutive batches of batch_size items.
+# The last one is smaller if the size doesn't divide evenly.
+def create_batches(items, batch_size):
+    for i in range(0, len(items), batch_size):
+        yield items[i:i + batch_size]
 
 
 # Seeds the random number generators used in training (NumPy, Python's random and, optionally, a Gymnasium

@@ -27,6 +27,16 @@ def sigmoid_derivative(z):
     return s * (1 - s)
 
 
+# Tanh: squashes z into (-1, 1), centered at 0. It was the usual choice for hidden layers before ReLU; like the
+# sigmoid, its gradient fades when |z| is large (the output saturates near -1 or 1).
+def tanh(z):
+    return np.tanh(z)
+
+
+def tanh_derivative(z):
+    return 1 - np.tanh(z) ** 2
+
+
 # Linear: returns z unchanged. Used in the output layer when the result can be any number (regression, Q-values).
 def linear(z):
     return z
@@ -45,10 +55,12 @@ def softmax(z):
     return exps / np.sum(exps, axis=-1, keepdims=True)
 
 
-ACTIVATIONS = {"relu": relu, "sigmoid": sigmoid, "linear": linear, "softmax": softmax}
+ACTIVATIONS = {"relu": relu, "sigmoid": sigmoid, "tanh": tanh, "linear": linear, "softmax": softmax}
 
 # Softmax isn't here: each of its outputs depends on every z of the sample, see activation_backward
-ELEMENTWISE_DERIVATIVES = {"relu": relu_derivative, "sigmoid": sigmoid_derivative, "linear": linear_derivative}
+ELEMENTWISE_DERIVATIVES = {
+    "relu": relu_derivative, "sigmoid": sigmoid_derivative, "tanh": tanh_derivative, "linear": linear_derivative,
+}
 
 
 def activation_fn(name, z):

@@ -9,6 +9,7 @@ from data import apply_minmax, create_batches, minmax_stats
 from losses import (
     check_loss, clip_gradients, is_softmax_crossentropy, loss_derivative_fn, loss_fn, softmax_crossentropy_delta,
 )
+from optimizers import make_optimizer
 
 
 # A dense (fully connected) layer: each neuron j computes a weighted sum of all the inputs plus its bias,
@@ -40,7 +41,8 @@ class FeedForward:
     def __init__(self, layers=None, configs=None):
         # New containers for each model (a default argument of [] would be one list shared by all models)
         self.layers = layers if layers is not None else []     # weights, biases and activation of each layer
-        self.configs = configs if configs is not None else {}  # loss function and input normalization
+        self.configs = configs if configs is not None else {}  # loss, optimizer and input normalization
+        self.optimizer = make_optimizer(self.configs.get("optimizer", "sgd"))  # applies the gradients (see update)
         self.cache = []    # inputs, z and output of each layer in the last forward pass, used by backward()
         self.history = {}  # loss of each epoch in the last train()
 
@@ -63,9 +65,13 @@ class FeedForward:
             "act_fn": act_fn,
         })
 
-    def configure(self, loss):
+    # loss: the loss function to minimize (see losses.py)
+    # optimizer: how the gradients update the parameters, "sgd" or "adam" (see optimizers.py)
+    def configure(self, loss, optimizer="sgd"):
         check_loss(loss)
         self.configs["loss"] = loss
+        self.configs["optimizer"] = optimizer
+        self.optimizer = make_optimizer(optimizer)  # a new optimizer starts without the state of the previous one
 
     # Fits min-max scaling to the training inputs. It is stored in the configs, so it is saved with the model and
     # every input (in train, predict and evaluate) is scaled with the same values, also after loading the model.
@@ -123,7 +129,8 @@ class FeedForward:
             order = np.random.permutation(len(inputs)) if shuffle else np.arange(len(inputs))
             epoch_loss = 0
 
-            for batch_count, (batch_inputs, batch_targets) in enumerate(create_batches(inputs[order], targets[order], batch_size), start=1):
+            for batch_count, batch_indices in enumerate(create_batches(order, batch_size), start=1):
+                batch_inputs, batch_targets = inputs[batch_indices], targets[batch_indices]
                 batch_loss = self.train_step(batch_inputs, batch_targets, learning_rate, l1_lambda, l2_lambda)
                 epoch_loss += batch_loss * len(batch_inputs)  # weighted, because the last batch may be smaller
 
@@ -219,10 +226,9 @@ class FeedForward:
 
     # Gradient descent: the gradient points to where the loss grows the fastest, so every parameter takes a small step
     # the other way. The learning rate sets the size of the step: too small learns slowly, too large overshoots.
+    # The optimizer decides the exact step: proportional to the gradient (SGD), or adapted to each parameter (Adam).
     def update(self, gradients, learning_rate):
-        for layer, (grad_weights, grad_biases) in zip(self.layers, gradients):
-            layer["weights"] -= learning_rate * grad_weights
-            layer["biases"] -= learning_rate * grad_biases
+        self.optimizer.update(self.layers, gradients, learning_rate)
 
     def summary(self):
         print("\n")
@@ -245,6 +251,7 @@ class FeedForward:
 
         print(f"Total Parameters: {total_params}")
         print(f"Loss Function: {self.configs['loss']}")
+        print(f"Optimizer: {self.configs.get('optimizer', 'sgd')}")
 
         if "normalization" in self.configs:
             print(f"Input Normalization: {self.configs['normalization']['method']}")

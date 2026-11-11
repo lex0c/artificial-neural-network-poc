@@ -144,3 +144,4 @@ These are the results of `train-cartpole.py` over 9 seeds:
 - `gamma = 0.99` with more episodes, with and without `double_dqn=True`, and compare `mean_q` with `1 / (1 - gamma)`.
 - A smaller `target_update_freq`, or a target model updated after every episode.
 - Learning after every step instead of once per episode, as in the original DQN.
+- The Adam optimizer for the Q-network (`model.configure(loss="mse", optimizer="adam")`) with a smaller learning rate.
