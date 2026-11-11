@@ -2,6 +2,7 @@ import io
 import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 
@@ -126,21 +127,44 @@ class TwoArmedBandit:
         return np.zeros(1), float(action == 1), True, False, {}
 
 
+def bandit_models():
+    np.random.seed(0)
+    policy = FeedForward()
+    policy.add_layer(num_inputs=1, num_neurons=2, act_fn="softmax")
+    policy.configure(loss=None, optimizer="adam")
+
+    value_model = FeedForward()
+    value_model.add_layer(num_inputs=1, num_neurons=1, act_fn="linear")
+    value_model.configure(loss="mse", optimizer="adam")
+    return policy, value_model
+
+
+# The size of each minibatch of one iteration with one epoch: the rows of the probabilities given to ppo_output_delta
+def minibatch_sizes(num_steps, minibatch_size):
+    policy, value_model = bandit_models()
+
+    with mock.patch("ppo.ppo_output_delta", wraps=ppo_output_delta) as delta, redirect_stdout(io.StringIO()):
+        train_ppo(TwoArmedBandit(), policy, value_model, total_steps=num_steps, num_steps=num_steps,
+                  minibatch_size=minibatch_size, num_epochs=1)
+
+    return [call.args[0].shape[0] for call in delta.call_args_list]
+
+
 class TrainPPOTest(unittest.TestCase):
     def test_learns_the_better_action(self):
-        np.random.seed(0)
-        policy = FeedForward()
-        policy.add_layer(num_inputs=1, num_neurons=2, act_fn="softmax")
-        policy.configure(loss=None, optimizer="adam")
-
-        value_model = FeedForward()
-        value_model.add_layer(num_inputs=1, num_neurons=1, act_fn="linear")
-        value_model.configure(loss="mse", optimizer="adam")
+        policy, value_model = bandit_models()
 
         with redirect_stdout(io.StringIO()):
             train_ppo(TwoArmedBandit(), policy, value_model, total_steps=1280, learning_rate=0.01, num_steps=64, minibatch_size=16, num_epochs=4)
 
         self.assertGreater(policy.predict(np.zeros((1, 1)))[0, 1], 0.95)
+
+    def test_minibatches_have_at_most_minibatch_size_steps(self):
+        self.assertEqual(minibatch_sizes(128, 64), [64, 64])
+        self.assertEqual(minibatch_sizes(100, 64), [64, 36])  # the last one gets the remaining steps
+
+    def test_rollout_shorter_than_a_minibatch_is_a_single_minibatch(self):
+        self.assertEqual(minibatch_sizes(32, 64), [32])
 
 
 if __name__ == "__main__":

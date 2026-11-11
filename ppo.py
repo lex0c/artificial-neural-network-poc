@@ -111,8 +111,8 @@ def ppo_output_delta(probs, actions, advantages, old_action_probs, clip_range, e
 # Trains a PPO agent, updating the policy and the value model in place. Each iteration:
 #   1. collect: play num_steps steps with the current policy
 #   2. advantages: compute them with GAE, using the value model
-#   3. learn: num_epochs passes over the collected steps, in random minibatches of minibatch_size; each minibatch
-#      updates the policy with the PPO gradient and the value model towards the returns (mean squared error)
+#   3. learn: num_epochs passes over the collected steps, in random minibatches of at most minibatch_size steps; each
+#      minibatch updates the policy with the PPO gradient and the value model towards the returns (mean squared error)
 #   4. evaluate: every eval_freq iterations, play eval_episodes with the most likely action in eval_env, and save the
 #      checkpoint when it is the best so far (starting with the policy before the training)
 # The data is then thrown away: PPO only learns from steps played with the current policy (on-policy).
@@ -159,7 +159,12 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
         stats = []
 
         for epoch in range(num_epochs):
-            for batch in np.array_split(np.random.permutation(num_steps), num_steps // minibatch_size):
+            # The steps in a random order, cut into minibatches of minibatch_size (the last one smaller when
+            # minibatch_size doesn't divide num_steps, and a single one when the rollout is shorter than a minibatch)
+            order = np.random.permutation(num_steps)
+
+            for start in range(0, num_steps, minibatch_size):
+                batch = order[start:start + minibatch_size]
                 # Advantages normalized per minibatch: only their relative size matters, and it keeps the step stable
                 batch_advantages = advantages[batch]
                 batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
