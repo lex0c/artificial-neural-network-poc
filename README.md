@@ -28,7 +28,7 @@ python train.py
 
 ### [cartpole](https://gymnasium.farama.org/environments/classic_control/cart_pole)
 
-Implementation of a Deep Q-Network (DQN) agent.
+Implementation of a Deep Q-Network (DQN) agent. The training loop lives in `dqn.py`; pass `double_dqn=True` to `train_dqn` to use Double DQN.
 
 Run the trained model
 
