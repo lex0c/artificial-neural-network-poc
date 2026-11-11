@@ -11,7 +11,7 @@ def relu(x):
 
 # Returns the derivative of the ReLU function evaluated at x.
 def relu_derivative(x):
-    return np.where(x > 0, 1, 0)
+    return np.where(np.asarray(x) > 0, 1, 0)
 
 
 # It is an activation function that compresses the output between 0 and 1. It is useful in output layers of 

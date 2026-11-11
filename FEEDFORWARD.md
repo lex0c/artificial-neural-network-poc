@@ -58,7 +58,6 @@ print(f"Test Loss: {test_loss:.2f}")
 - **batch_size**: Number of samples per weight update; the gradient is averaged over the batch (default is 32). Use 1 to update after every sample.
 - **l1_lambda**: L1 regularization parameter (default is 0.0).
 - **l2_lambda**: L2 regularization parameter (default is 0.0).
-- **use_granular_update**: If true, uses a more granular backward, updating each weight individually (slower, default is False).
 - **verbose**: If True, print detailed training progress (default is False).
 
 ### Save and Load Models

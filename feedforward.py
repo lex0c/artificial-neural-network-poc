@@ -87,7 +87,7 @@ class FeedForward:
 
         return values
 
-    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0, use_granular_update=False, verbose=False):
+    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0, verbose=False):
         self.learning_rate = learning_rate
         total_loss = 0
 
@@ -123,10 +123,7 @@ class FeedForward:
                     #gradients = normalize_gradients(gradients)
 
                 # Backpropagation: one update per batch, with the gradient averaged over its samples
-                if use_granular_update:
-                    self.backward_stable(gradients, batch_inputs, skip_last_activation)
-                else:
-                    self.backward_unstable(gradients, batch_inputs, l1_lambda, l2_lambda, skip_last_activation)
+                self.backward(gradients, batch_inputs, l1_lambda, l2_lambda, skip_last_activation)
 
                 if verbose:
                     filled = round(30 * batch_count / num_batches)
@@ -141,54 +138,13 @@ class FeedForward:
 
         return total_loss / epochs, self.learning_rate
 
-    # Updates each weight individually (slower, but easier to follow)
+    # Backpropagation: goes from the last layer to the first, calculating the gradients of each layer with matrix
+    # operations and updating its weights and biases.
     #
     # gradients: gradient of the mean batch loss in relation to the output of the last layer
     #            (or to its pre-activation, when skip_last_activation is True).
-    # input_values: the batch that was passed to forward().
-    def backward_stable(self, gradients, input_values, skip_last_activation=False):
-        gradients = np.atleast_2d(gradients)  # shape (batch_size, num_neurons)
-        last = len(self.layers) - 1
-
-        for i in reversed(range(len(self.layers))):
-            layer = self.layers[i]
-            weights = layer["weights"]
-
-            # If it's the first layer, the input comes directly from the dataset
-            previous_output = np.atleast_2d(self.layers[i-1]["output"] if i > 0 else input_values)
-
-            # Gradient of the loss in relation to each neuron's pre-activation, per sample
-            if i == last and skip_last_activation:
-                delta = gradients
-            else:
-                delta = np.atleast_2d(activation_backward(layer["act_fn"], layer["z"], layer["output"], gradients))
-
-            incoming_gradients = np.zeros_like(previous_output)
-
-            # Calculates the gradient for each neuron in the layer
-            for j in range(len(weights)):
-                for k in range(len(weights[j])):
-                    # Accumulates the gradient for the previous layer, using the weight from the forward pass
-                    # (read before it is updated below)
-                    if i > 0:
-                        incoming_gradients[:, k] += weights[j][k] * delta[:, j]
-
-                    # Weight gradient, summed over the samples of the batch
-                    grad_weight = np.sum(delta[:, j] * previous_output[:, k])
-                    weights[j][k] -= self.learning_rate * grad_weight
-
-                # Bias gradient
-                grad_bias = np.sum(delta[:, j])
-                layer["biases"][j] -= self.learning_rate * grad_bias
-
-            gradients = incoming_gradients
-
-    # Updates all the weights of a layer at once with matrix operations (faster)
-    #
-    # gradients: gradient of the mean batch loss in relation to the output of the last layer
-    #            (or to its pre-activation, when skip_last_activation is True).
-    # input_values: the batch that was passed to forward().
-    def backward_unstable(self, gradients, input_values, l1_lambda=0.0, l2_lambda=0.0, skip_last_activation=False):
+    # input_values: the normalized batch that was passed to forward_layers().
+    def backward(self, gradients, input_values, l1_lambda=0.0, l2_lambda=0.0, skip_last_activation=False):
         gradients = np.atleast_2d(gradients)  # shape (batch_size, num_neurons)
         last = len(self.layers) - 1
 
@@ -198,14 +154,16 @@ class FeedForward:
             # If it's the first layer, the input comes directly from the dataset
             previous_output = np.atleast_2d(self.layers[i-1]["output"] if i > 0 else input_values)
 
-            # Gradient of the loss in relation to each neuron's pre-activation, per sample
+            # Gradient of the loss in relation to each neuron's pre-activation, per sample: delta[s, j]
             if i == last and skip_last_activation:
                 delta = gradients
             else:
                 delta = np.atleast_2d(activation_backward(layer["act_fn"], layer["z"], layer["output"], gradients))
 
             # Weight and bias gradients, summed over the samples of the batch
-            # (the loss gradient already carries the 1/batch_size factor)
+            # (the loss gradient already carries the 1/batch_size factor):
+            #   grad_weight[j, k] = sum over samples s of delta[s, j] * previous_output[s, k]
+            #   grad_bias[j]      = sum over samples s of delta[s, j]
             grad_weight = np.dot(delta.T, previous_output)  # shape (num_neurons, num_inputs)
             grad_bias = np.sum(delta, axis=0)               # one value per neuron
 
@@ -217,8 +175,9 @@ class FeedForward:
             if l2_lambda > 0:
                 grad_weight += l2_lambda * layer["weights"]
 
-            # Prepares the gradient for the next layer (previous in the order of execution),
-            # using the weights from the forward pass, before they are updated
+            # Prepares the gradient for the next layer (previous in the order of execution), using the weights from
+            # the forward pass, before they are updated:
+            #   gradients[s, k] = sum over neurons j of delta[s, j] * weights[j, k]
             if i > 0:
                 gradients = np.dot(delta, layer["weights"])
 
