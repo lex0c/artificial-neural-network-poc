@@ -53,8 +53,9 @@ Q(state, action) = reward                                  if the episode ended 
 So every step the agent experienced, `(state, action, reward, next_state)`, gives a target for `Q(state, action)`,
 computed with the network's own estimate for the next state. Training the network with the mean squared error towards
 these targets makes its estimates consistent with the equation, and the rewards propagate back from step to step.
-Only the output for the action that was taken gets a Bellman target. The other output gets its current prediction as
-target, so at first its error is zero (`replay_experience` in `dqn.py`).
+A transition only says something about the action that was taken, so only that output is trained: the target of each
+update is the model's current prediction, made right before the update, with the Bellman target in place of the action
+taken. The other output then has no error (`learn_from_memory` in `dqn.py`).
 
 Only a **terminated** episode has no future: when the episode is **truncated** by the time limit, the pole was still
 up and the future would have gone on, so the target still includes `gamma * max Q(next_state)`. That is why the
@@ -91,7 +92,7 @@ target model evaluates it.
 1. act        play_episode:       play an episode with epsilon-greedy, storing each
                                    (state, action, reward, next_state, terminated) in the replay memory
 2. learn      learn_from_memory:  sample batch_size transitions, compute their Bellman targets
-                                   (replay_experience) and fit the model to them
+                                   (replay_experience) and take one gradient descent step per transition
 3. evaluate   evaluate_greedy:    every eval_freq episodes, play eval_episodes without exploration;
                                    save the model if it is the best so far
 4. schedules                      epsilon = max(epsilon_min, epsilon * epsilon_decay)
@@ -100,13 +101,9 @@ target model evaluates it.
 
 ### Simplifications in this project
 
-- **When it learns.** This project learns once per episode: it samples 512 transitions and makes one update per
-  transition (`batch_size=1` in `model.train`). The original DQN makes one minibatch update after every step of the
+- **When it learns.** This project learns once per episode: it samples 512 transitions and takes one gradient descent
+  step per transition (`model.train_step`). The original DQN makes one minibatch update after every step of the
   environment.
-- **Targets of the actions not taken.** The targets of a batch are computed once, before its 512 updates. Each
-  update also changes the predictions for the other transitions, so the targets of the actions not taken (their
-  prediction before the updates) become slightly outdated, and the following updates pull those Q-values back towards
-  them. The original DQN only trains the Q-value of the action taken.
 - **Optimizer and loss.** Plain gradient descent with the mean squared error, with the error clipped to `[-10, 10]`
   (`clip_gradients`; with one transition per update, `dL/dq` is the error itself). The original DQN used RMSProp and
   clipped the error to `[-1, 1]`, which behaves like the Huber loss.
@@ -139,14 +136,16 @@ Each episode adds a row to `metrics/cartpole.csv`, and `show-cartpole-metrics.py
 
 These are the results of `train-cartpole.py` over 9 seeds:
 
-- The greedy reward grows from about 90 after 100 episodes to about 420 after 500 episodes. None of the runs diverged.
-- The mean Q-value levels off just above 5.0 (about 5.02 to 5.05). The true Q-values are always below
-  `1 / (1 - gamma) = 5`, so this is a mild overestimation, the effect Double DQN reduces.
-- The policy doesn't settle: over 1000 episodes, 3 of the 9 runs fell below 300 after reaching 500. Keeping the best
-  checkpoint makes the saved model better than the last one (457 against 422 on average, on episodes it never saw).
-- Within 500 episodes, `gamma = 0.8` learned the best. Higher values look further ahead, but their Q-values take
-  longer to grow and the reward stayed lower (about 320 with 0.95 and 210 to 250 with 0.99). Double DQN didn't help
-  at `gamma = 0.8`.
+- The greedy reward grows from about 120 after 100 episodes to about 415 after 500 episodes, and 450 after 1000.
+  None of the runs diverged.
+- The mean Q-value levels off between 5.0 and 5.1. The true Q-values are always below `1 / (1 - gamma) = 5`, so the
+  part above 5 is a mild overestimation, the effect Double DQN reduces.
+- The policy doesn't fully settle: the greedy reward of a run often moves by 100 or more between evaluations, and one
+  run went from 500 down to 327. Keeping the best checkpoint makes the saved model better than the last one: 455
+  against 417 on average, on episodes they never saw (better in 6 runs, equal in 3).
+- Within 500 episodes, `gamma = 0.8` learned the best (447 on average over 6 seeds). Higher values look further ahead,
+  but their Q-values take longer to grow and the reward stayed lower: about 315 to 350 with 0.9, 330 to 365 with
+  0.95, and 250 to 270 with 0.99. Double DQN didn't help at `gamma = 0.8` (419).
 
 ## Things to try
 

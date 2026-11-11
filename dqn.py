@@ -52,14 +52,11 @@ def play_episode(env, model, memory, epsilon):
             return total_reward, steps
 
 
-# Builds a training batch from random transitions of the replay memory: the states, and the Q-values the model should
-# predict for them, the Bellman targets:
+# Samples a random batch of transitions from the replay memory and computes their Bellman targets, the Q-value each
+# action taken should have:
 #   target = reward + gamma * max over the actions a' of Q_target(next_state, a')
 #   target = reward, if the episode ended in next_state
-# Only the Q-value of the action that was taken gets a Bellman target; the others get their current prediction, so at
-# first their error is zero. learn_from_memory then makes one update per transition, and each update also changes the
-# predictions of the other transitions: by then those targets are slightly outdated, and they pull the Q-values of the
-# actions not taken back towards their values before the updates (see DQN.md).
+# Returns the states, the actions taken and their targets (None while the memory isn't larger than batch_size).
 #
 # Sampling at random, instead of learning from the last steps in order, breaks the correlation between consecutive
 # states (they are almost the same), and reuses each experience many times.
@@ -74,7 +71,6 @@ def replay_experience(memory, model, target_model, batch_size, gamma, double_dqn
     next_states = np.vstack(next_states)
 
     next_q_values = target_model.predict(next_states)
-    current_q_values = model.predict(states)
 
     if double_dqn:
         # Double DQN: the model chooses the best next action and the target model evaluates it. Taking the max over
@@ -87,33 +83,42 @@ def replay_experience(memory, model, target_model, batch_size, gamma, double_dqn
 
     target_q_values = rewards + gamma * next_values * (1 - terminals)
 
-    targets = current_q_values.copy()
-    targets[np.arange(batch_size), actions] = target_q_values
-
-    return states, targets
+    return states, actions, target_q_values
 
 
-# Fits the model to the Bellman targets of a random batch of transitions from the replay memory.
+# Fits the model to the Bellman targets of a random batch of transitions from the replay memory, with one gradient
+# descent step per transition.
 #
-# This project learns once per episode, with one update per sampled transition (batch_size=1 in model.train). The
-# original DQN instead does one minibatch update after every step of the environment.
+# The model has one output per action, but a transition only says something about the action that was taken. So the
+# target of each step is the current prediction of the model, made right before the step, with the Bellman target in
+# place of the action taken: the other outputs have no error and only the Q-value of the action taken is trained.
+# The Bellman targets can be computed once for the whole batch, because the target model doesn't change during it.
 #
-# Returns the loss and the mean of the highest Q-value of the sampled states (None while the memory is too small).
-# The mean Q-value should level off near the discounted return the agent gets, at most 1 / (1 - gamma) with a reward
-# of 1 per step; growing beyond it means the Q-values are overestimated.
+# This project learns once per episode, with one step per sampled transition. The original DQN instead does one
+# minibatch update after every step of the environment.
+#
+# Returns the mean loss of the steps and the mean of the highest Q-value of the sampled states (None while the memory
+# is too small). The mean Q-value should level off near the discounted return the agent gets, always below
+# 1 / (1 - gamma) with a reward of 1 per step; values beyond it mean the Q-values are overestimated.
 def learn_from_memory(memory, model, target_model, batch_size, gamma, learning_rate, l1_lambda, l2_lambda, double_dqn):
     training_data = replay_experience(memory, model, target_model, batch_size, gamma, double_dqn)
 
     if training_data is None:
         return None, None
 
-    states, targets = training_data
+    states, actions, target_q_values = training_data
     mean_q = float(np.mean(np.max(model.predict(states), axis=1)))
+    losses = []
 
-    # shuffle=False: the batch is already a random sample of the memory
-    history = model.train(states, targets, epochs=1, learning_rate=learning_rate, batch_size=1, l1_lambda=l1_lambda, l2_lambda=l2_lambda, shuffle=False)
+    for state, action, target_q in zip(states, actions, target_q_values):
+        state = model.normalize(state.reshape(1, -1))  # train_step expects normalized inputs, as train() gives it
 
-    return history["loss"][0], mean_q
+        targets = model.forward_layers(state).copy()   # the current prediction for every action...
+        targets[0, action] = target_q                 # ...with the Bellman target for the action taken
+
+        losses.append(model.train_step(state, targets, learning_rate, l1_lambda, l2_lambda))
+
+    return float(np.mean(losses)), mean_q
 
 
 # Plays episodes with the greedy policy (always the action with the highest Q-value, no exploration) and returns the

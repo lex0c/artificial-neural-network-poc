@@ -11,7 +11,7 @@ from unittest import mock
 
 import numpy as np
 
-from dqn import evaluate_greedy, replay_experience, train_dqn
+from dqn import evaluate_greedy, learn_from_memory, replay_experience, train_dqn
 from feedforward import FeedForward, clone_model
 
 
@@ -45,14 +45,14 @@ TRANSITIONS = {
 
 def targets_by_state(double_dqn):
     # The memory needs more transitions than the batch size, so each sample picks 2 of the 3 transitions.
-    # Sampling with several seeds checks all of them; the rows are identified by their state.
+    # Sampling with several seeds checks all of them; the transitions are identified by their state.
     found = {}
 
     for seed in range(20):
         random.seed(seed)
         memory = deque(TRANSITIONS.values())
-        states, targets = replay_experience(memory, ONLINE, TARGET, batch_size=len(memory) - 1, gamma=GAMMA, double_dqn=double_dqn)
-        found.update({int(s[0]): t for s, t in zip(states, targets)})
+        states, actions, target_q_values = replay_experience(memory, ONLINE, TARGET, batch_size=len(memory) - 1, gamma=GAMMA, double_dqn=double_dqn)
+        found.update({int(s[0]): (a, t) for s, a, t in zip(states, actions, target_q_values)})
 
     return found
 
@@ -62,12 +62,10 @@ class ReplayExperienceTest(unittest.TestCase):
         targets = targets_by_state(double_dqn)
         self.assertEqual(set(targets), set(TRANSITIONS))
 
-        for state_id, target in targets.items():
-            _, action, reward, _, terminal = TRANSITIONS[state_id]
-            expected = ONLINE.table[state_id].copy()  # actions not taken keep the current prediction
-            expected[action] = reward if terminal else reward + GAMMA * next_value_of_state_10
-
-            np.testing.assert_allclose(target, expected, err_msg=f"state {state_id}")
+        for state_id, (action, target_q) in targets.items():
+            _, expected_action, reward, _, terminal = TRANSITIONS[state_id]
+            self.assertEqual(action, expected_action)
+            self.assertAlmostEqual(target_q, reward if terminal else reward + GAMMA * next_value_of_state_10, msg=f"state {state_id}")
 
     def test_dqn_uses_the_max_of_the_target_model(self):
         self.assert_targets(double_dqn=False, next_value_of_state_10=5.0)
@@ -79,6 +77,35 @@ class ReplayExperienceTest(unittest.TestCase):
     def test_needs_more_transitions_than_the_batch_size(self):
         memory = deque(TRANSITIONS.values())
         self.assertIsNone(replay_experience(memory, ONLINE, TARGET, batch_size=len(memory), gamma=GAMMA, double_dqn=False))
+
+
+class LearnFromMemoryTest(unittest.TestCase):
+    def test_only_the_action_taken_has_an_error(self):
+        np.random.seed(0)
+        random.seed(0)
+        model = FeedForward()
+        model.add_layer(num_inputs=4, num_neurons=8, act_fn="relu")
+        model.add_layer(num_inputs=8, num_neurons=2, act_fn="linear")
+        model.configure(loss="mse")
+        target_model = clone_model(model)
+
+        memory = deque((np.random.normal(0, 1, (1, 4)), i % 2, 1.0, np.random.normal(0, 1, (1, 4)), False) for i in range(20))
+        steps = []
+        train_step = model.train_step
+
+        # Before each step, compare its targets with what the model predicts at that moment
+        def checked_train_step(inputs, targets, *args):
+            steps.append((targets.copy(), model.forward_layers(inputs).copy()))
+            return train_step(inputs, targets, *args)
+
+        model.train_step = checked_train_step
+        learn_from_memory(memory, model, target_model, batch_size=10, gamma=0.9, learning_rate=0.1, l1_lambda=0.0, l2_lambda=0.0, double_dqn=False)
+
+        self.assertEqual(len(steps), 10)  # one step per sampled transition
+
+        for targets, predictions in steps:
+            differences = np.flatnonzero(targets[0] != predictions[0])
+            self.assertLessEqual(len(differences), 1)  # only the action taken (unless its prediction is already right)
 
 
 class ScriptedEnv:
