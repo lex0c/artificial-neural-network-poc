@@ -46,10 +46,6 @@ inputs = [[-1.7021547074061765], [-2.34438654901332], [-4.749754186552664], [-5.
 targets = [[-4.404309414812353], [-5.68877309802664], [-10.499508373105328], [-12.12330704949624], [17.157015002707915]]
 
 model.train(inputs, targets, epochs=100, learning_rate=0.001, verbose=True)
-
-test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
-print(f"Test Accuracy: {test_accuracy*100:.2f}%")
-print(f"Test Loss: {test_loss:.2f}")
 ```
 - **inputs**: Input data for training.
 - **targets**: Target labels for training (class indices when using `sparse_categorical_crossentropy`).
@@ -59,6 +55,32 @@ print(f"Test Loss: {test_loss:.2f}")
 - **l1_lambda**: L1 regularization parameter (default is 0.0).
 - **l2_lambda**: L2 regularization parameter (default is 0.0).
 - **verbose**: If True, print detailed training progress (default is False).
+- **validation_data**: Optional `(inputs, targets)` not used for training. Its loss (and accuracy, for classification) is printed after each epoch, to see whether the model generalizes or starts to overfit.
+
+The loss of each epoch, and the validation metrics, are kept in `model.history`.
+
+### Evaluate the Model
+
+```python
+test_loss, test_accuracy = model.evaluate(test_inputs, test_targets)
+```
+
+The accuracy depends on the output layer:
+
+- **softmax**, several **sigmoid** outputs or class indices (`sparse_categorical_crossentropy`): the output with the highest value is the predicted class.
+- a single **sigmoid** output (binary classification): above 0.5 is class 1.
+- other outputs, such as **linear** for regression: there is no accuracy, so it is `None`.
+
+For regression, use the error metrics instead:
+
+```python
+metrics = model.regression_metrics(test_inputs, test_targets)
+print(metrics["mae"], metrics["rmse"], metrics["r2"])
+```
+
+- **mae**: mean absolute error, in the units of the targets.
+- **rmse**: root mean squared error. It penalizes large errors more than `mae`.
+- **r2**: coefficient of determination. 1 is perfect, and 0 is as good as always predicting the mean of the targets.
 
 ### Save and Load Models
 

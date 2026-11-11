@@ -22,10 +22,13 @@ model.summary()
 
 model.train(xs, ys, epochs=500, learning_rate=0.0001, batch_size=1, verbose=True)  # one update per sample
 
-test_loss, test_accuracy = model.evaluate(test_xs, test_ys)
+test_loss, _ = model.evaluate(test_xs, test_ys)  # no accuracy for regression
+metrics = model.regression_metrics(test_xs, test_ys)
 
-print(f"Test Accuracy: {test_accuracy*100:.2f}%")
-print(f"Test Loss: {test_loss:.2f}")
+print(f"Test Loss (MSE): {test_loss:.4f}")
+print(f"Test MAE: {metrics['mae']:.4f}")
+print(f"Test RMSE: {metrics['rmse']:.4f}")
+print(f"Test R2: {metrics['r2']:.4f}")
 
 model.save('models/simple_linear_function.joblib')
 

@@ -288,6 +288,57 @@ class KnownValuesTest(unittest.TestCase):
         np.testing.assert_allclose(softmax_crossentropy_delta("sparse_categorical_crossentropy", self.CLASSES, self.PREDICTIONS), expected)
 
 
+class MetricsTest(unittest.TestCase):
+    def linear_model(self):
+        # y = 2x - 1 exactly
+        model = FeedForward()
+        model.add_layer(num_inputs=1, num_neurons=1, act_fn="linear")
+        model.configure(loss="mse")
+        model.layers[0]["weights"][:] = 2.0
+        model.layers[0]["biases"][:] = -1.0
+        return model
+
+    def test_regression_has_no_accuracy(self):
+        self.assertIsNone(self.linear_model().evaluate([[0.0], [1.0]], [[-1.0], [1.0]])[1])
+
+    def test_regression_metrics(self):
+        # Predictions -1, 1, 3, 5 for targets -1, 1, 4, 5: errors 0, 0, -1, 0
+        # mae = 1/4, rmse = sqrt(1/4), r2 = 1 - 1 / sum((targets - 2.25)^2) = 1 - 1 / 22.75
+        metrics = self.linear_model().regression_metrics([[0.0], [1.0], [2.0], [3.0]], [-1.0, 1.0, 4.0, 5.0])
+
+        self.assertAlmostEqual(metrics["mae"], 0.25)
+        self.assertAlmostEqual(metrics["rmse"], 0.5)
+        self.assertAlmostEqual(metrics["r2"], 1 - 1 / 22.75)
+
+    def test_binary_accuracy_with_one_sigmoid_output(self):
+        # sigmoid(x) = 0.12, 0.27, 0.73, 0.88 -> classes 0, 0, 1, 1 for labels 0, 1, 1, 1
+        model = FeedForward()
+        model.add_layer(num_inputs=1, num_neurons=1, act_fn="sigmoid")
+        model.configure(loss="mse")
+        model.layers[0]["weights"][:] = 1.0
+
+        self.assertAlmostEqual(model.evaluate([[-2.0], [-1.0], [1.0], [2.0]], [0, 1, 1, 1])[1], 0.75)
+
+    def test_validation_metrics_per_epoch(self):
+        np.random.seed(0)
+        rng = np.random.default_rng(8)
+        model = build_model("relu", "softmax", "categorical_crossentropy")
+        inputs = rng.normal(0, 1, (30, NUM_INPUTS))
+        targets = to_categorical(rng.integers(0, NUM_OUTPUTS, 30), num_classes=NUM_OUTPUTS)
+        val_inputs = rng.normal(0, 1, (10, NUM_INPUTS))
+        val_targets = to_categorical(rng.integers(0, NUM_OUTPUTS, 10), num_classes=NUM_OUTPUTS)
+
+        with redirect_stdout(io.StringIO()):
+            model.train(inputs, targets, epochs=3, learning_rate=0.1, batch_size=8, validation_data=(val_inputs, val_targets))
+
+        self.assertEqual([len(model.history[key]) for key in ("loss", "val_loss", "val_accuracy")], [3, 3, 3])
+
+        # The last values are the metrics of the final model
+        val_loss, val_accuracy = model.evaluate(val_inputs, val_targets)
+        self.assertAlmostEqual(model.history["val_loss"][-1], val_loss)
+        self.assertAlmostEqual(model.history["val_accuracy"][-1], val_accuracy)
+
+
 class DatasetShapeTest(unittest.TestCase):
     # Single input and single output: y = 2x - 1
     def train_linear(self, inputs, targets):

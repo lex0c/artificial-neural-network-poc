@@ -32,6 +32,7 @@ class FeedForward:
         self.layers = layers if layers is not None else []
         self.configs = configs if configs is not None else {}
         self.learning_rate = 0.0001
+        self.history = {}
 
     def add_layer(self, num_inputs, num_neurons, act_fn):
         if act_fn == "relu":
@@ -87,8 +88,13 @@ class FeedForward:
 
         return values
 
-    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0, verbose=False):
+    # validation_data: optional (inputs, targets) not used for training. Its loss (and accuracy, for classification)
+    # is calculated after each epoch, to see whether the model generalizes or starts to overfit.
+    #
+    # The loss of each epoch (and the validation metrics) are kept in self.history.
+    def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0, verbose=False, validation_data=None):
         self.learning_rate = learning_rate
+        self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
         total_loss = 0
 
         inputs, targets = self.prepare_dataset(inputs, targets)
@@ -132,9 +138,21 @@ class FeedForward:
 
             epoch_loss /= len(inputs)
             total_loss += epoch_loss
+            self.history["loss"].append(epoch_loss)
+
+            summary = f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}"
+
+            if validation_data is not None:
+                val_loss, val_accuracy = self.evaluate(*validation_data)
+                self.history["val_loss"].append(val_loss)
+                self.history["val_accuracy"].append(val_accuracy)
+
+                summary += f", Val Loss: {val_loss}"
+                if val_accuracy is not None:
+                    summary += f", Val Accuracy: {val_accuracy:.4f}"
 
             print('')  # add an empty line to prevent flush
-            print(f"Epoch: {epoch+1}/{epochs}, Loss: {epoch_loss}, LR: {self.learning_rate}")
+            print(f"{summary}, LR: {self.learning_rate}")
 
         return total_loss / epochs, self.learning_rate
 
@@ -258,17 +276,44 @@ class FeedForward:
         # Calculate mean loss
         loss = loss_fn(self.configs["loss"], test_labels, predictions)
 
-        # Calculate accuracy
-        predicted_classes = np.argmax(predictions, axis=-1)
+        return loss, self.accuracy(predictions, test_labels)
+
+    # Fraction of correct predictions, for classification models:
+    # - class indices (sparse_categorical_crossentropy), softmax or several sigmoid outputs: the output with the
+    #   highest value is the predicted class
+    # - a single sigmoid output (binary classification): above 0.5 is class 1
+    # Other outputs (e.g. linear, for regression) have no accuracy, so it returns None (see regression_metrics).
+    def accuracy(self, predictions, labels):
+        act_fn = self.layers[-1]["act_fn"]
 
         if self.configs["loss"] == "sparse_categorical_crossentropy":
-            true_classes = test_labels.astype(int).reshape(predicted_classes.shape)  # labels are class indices
+            predicted = np.argmax(predictions, axis=-1)
+            expected = labels.astype(int).reshape(predicted.shape)  # labels are class indices
+        elif act_fn == "softmax" or (act_fn == "sigmoid" and predictions.shape[-1] > 1):
+            predicted = np.argmax(predictions, axis=-1)
+            expected = np.argmax(labels, axis=-1)  # labels are one-hot encoded
+        elif act_fn == "sigmoid":
+            predicted = predictions > 0.5
+            expected = labels > 0.5
         else:
-            true_classes = np.argmax(test_labels, axis=-1)  # labels are one-hot encoded
+            return None
 
-        accuracy = np.mean(predicted_classes == true_classes)
+        return float(np.mean(predicted == expected))
 
-        return loss, accuracy
+    # Error metrics for regression models, in the units of the targets:
+    # - mae: mean absolute error
+    # - rmse: root mean squared error (penalizes large errors more than mae)
+    # - r2: coefficient of determination (1 is perfect, 0 is as good as always predicting the mean of the targets)
+    def regression_metrics(self, test_inputs, test_targets):
+        test_inputs, test_targets = self.prepare_dataset(test_inputs, test_targets)
+        errors = self.forward(test_inputs) - test_targets
+        total_variance = np.sum((test_targets - np.mean(test_targets, axis=0)) ** 2)
+
+        return {
+            "mae": float(np.mean(np.abs(errors))),
+            "rmse": float(np.sqrt(np.mean(errors ** 2))),
+            "r2": float(1 - np.sum(errors ** 2) / total_variance) if total_variance > 0 else float("nan"),
+        }
 
     def save(self, filepath):
         # Only the parameters: the activations of the last forward pass ("z" and "output") aren't needed to use the

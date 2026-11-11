@@ -41,6 +41,10 @@ def generate_weather_dataset(num_samples=10):
 features, labels, labels_raw = generate_weather_dataset(100)
 labels_normalized = to_categorical(labels, num_classes=len(labels_raw))
 
+# Validation: checked after each epoch to see whether the model generalizes (it isn't used for training)
+val_features, val_labels, _ = generate_weather_dataset(20)
+val_labels_normalized = to_categorical(val_labels, num_classes=len(labels_raw))
+
 test_features, test_labels, test_labels_raw = generate_weather_dataset(20)
 test_labels_normalized = to_categorical(test_labels, num_classes=len(test_labels_raw))
 
@@ -52,7 +56,7 @@ model.configure(loss='categorical_crossentropy')
 model.fit_normalization(features)  # saved with the model, so run-weather.py scales its inputs the same way
 model.summary()
 
-model.train(features, labels_normalized, epochs=100, learning_rate=0.1, verbose=True)
+model.train(features, labels_normalized, epochs=100, learning_rate=0.1, verbose=True, validation_data=(val_features, val_labels_normalized))
 
 test_loss, test_accuracy = model.evaluate(test_features, test_labels_normalized)
 

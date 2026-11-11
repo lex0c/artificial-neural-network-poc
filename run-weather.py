@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -61,6 +61,9 @@ predicted_labels = np.argmax(predictions, axis=1)
 
 cm = confusion_matrix(test_labels, predicted_labels)
 
-class_names = test_labels_raw
+class_names = list(test_labels_raw)
 plot_confusion_matrix(cm, class_names)
+
+# Precision, recall and F1 of each class (accuracy alone hides which classes get confused)
+print(classification_report(test_labels, predicted_labels, target_names=class_names, digits=3))
 
