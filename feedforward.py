@@ -51,9 +51,11 @@ class FeedForward:
             raise ValueError(f"Invalid activation function: {act_fn}. Use one of {list(ACTIVATIONS)}")
 
         # The initial weights are random: if they were all equal, every neuron of the layer would compute the same
-        # thing and receive the same update forever. Their scale keeps the variance of z similar from layer to layer,
-        # so the signal neither explodes nor fades: He initialization (variance 2 / num_inputs) for ReLU, which zeroes
-        # about half of its inputs, and LeCun initialization (variance 1 / num_inputs) for the other activations.
+        # thing and receive the same update forever. Their scale aims to keep the variance of z similar from layer to
+        # layer, so the signal neither explodes nor fades: He initialization (variance 2 / num_inputs) for ReLU layers
+        # and LeCun initialization (variance 1 / num_inputs) for the others. The factor 2 of He makes up for a ReLU
+        # zeroing about half of its outputs, so it keeps the variance exactly from one ReLU layer to the next; choosing
+        # by the layer's own activation, as here, is the usual rule of thumb.
         if act_fn == "relu":
             std_dev = math.sqrt(2 / num_inputs)
         else:
@@ -320,7 +322,8 @@ class FeedForward:
     # Error metrics for regression models, in the units of the targets:
     # - mae: mean absolute error
     # - rmse: root mean squared error (penalizes large errors more than mae)
-    # - r2: coefficient of determination (1 is perfect, 0 is as good as always predicting the mean of the targets)
+    # - r2: coefficient of determination (1 is perfect, 0 is as good as always predicting the mean of the targets);
+    #   with several outputs, their errors and variances are added up before dividing
     def regression_metrics(self, test_inputs, test_targets):
         test_inputs, test_targets = self.prepare_dataset(test_inputs, test_targets)
         errors = self.forward(test_inputs) - test_targets

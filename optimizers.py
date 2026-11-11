@@ -22,8 +22,9 @@ class SGD:
 # learning_rate, whatever the scale of its gradients, so parameters with small gradients still learn.
 #
 # m and v start at 0, so in the first updates they are too small; dividing by (1 - beta^t) corrects that (bias
-# correction). In the first update this makes the step exactly learning_rate * gradient / |gradient|, about
-# learning_rate in the direction of the gradient. The averages carry over between train() calls.
+# correction). In the first update this makes the step learning_rate * gradient / (|gradient| + epsilon): about
+# learning_rate against the direction of the gradient, unless the gradient is close to epsilon. The averages carry over
+# between train() calls.
 class Adam:
     def __init__(self, beta1=0.9, beta2=0.999, epsilon=1e-8):
         self.beta1 = beta1      # how much of the previous mean of the gradients each update keeps

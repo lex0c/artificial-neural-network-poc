@@ -56,8 +56,10 @@ def play_episode(env, model, memory, epsilon):
 # predict for them, the Bellman targets:
 #   target = reward + gamma * max over the actions a' of Q_target(next_state, a')
 #   target = reward, if the episode ended in next_state
-# Only the Q-value of the action that was taken gets this target; the others keep their current prediction, so they
-# don't change.
+# Only the Q-value of the action that was taken gets a Bellman target; the others get their current prediction, so at
+# first their error is zero. learn_from_memory then makes one update per transition, and each update also changes the
+# predictions of the other transitions: by then those targets are slightly outdated, and they pull the Q-values of the
+# actions not taken back towards their values before the updates (see DQN.md).
 #
 # Sampling at random, instead of learning from the last steps in order, breaks the correlation between consecutive
 # states (they are almost the same), and reuses each experience many times.

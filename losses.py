@@ -8,6 +8,10 @@ from data import to_categorical
 # Each loss takes a single sample (y_pred with shape (num_outputs,)) or a batch (shape (batch_size, num_outputs)) and
 # returns the mean over the samples. Each derivative is the gradient of that mean with respect to y_pred, so it already
 # includes the division by the number of samples (for mse, by the number of samples times the number of outputs).
+#
+# The cross-entropy losses clip the probabilities to [1e-7, 1 - 1e-7] to avoid log(0). The derivatives keep the formula
+# of the unclipped loss: where a probability is clipped, the clipped loss would be flat and its gradient 0, which would
+# stop the model from learning exactly where it is most wrong.
 
 
 def num_samples(y_pred):
@@ -28,7 +32,8 @@ def mse_loss_derivative(y_true, y_pred):
 
 
 # Categorical cross-entropy: -sum(y_true * log(y_pred)) per sample. With one-hot labels this is minus the log of the
-# probability given to the true class: 0 when it is 1, and very large when a confident prediction is wrong.
+# probability given to the true class: close to 0 when it is close to 1, and very large when a confident prediction is
+# wrong.
 # Used for classification with a softmax output. Probabilities are clipped away from 0, so log(0) can't happen.
 def categorical_crossentropy(y_true, y_pred):
     y_true = np.array(y_true)
@@ -108,5 +113,7 @@ def is_softmax_crossentropy(act_fn, loss):
 
 # Gradient clipping limits each value of a gradient to [-threshold, threshold], so a single huge error (an outlier,
 # or an early Q-value target far from the prediction) can't produce an update large enough to make training diverge.
+# It is applied to dL/dy_pred, which already includes the division by the batch size (and, for mse, by the number of
+# outputs): with large batches, an error has to be much larger to reach the threshold.
 def clip_gradients(gradients, threshold):
     return np.clip(gradients, -threshold, threshold)

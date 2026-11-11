@@ -131,8 +131,10 @@ model towards it.
 | `categorical_crossentropy` | `-sum(y_true * log(y_pred))`, with one-hot `y_true` | classification with a softmax output |
 | `sparse_categorical_crossentropy` | the same, with class indices as labels | classification with a softmax output |
 
-Cross-entropy is minus the log of the probability given to the true class: 0 when that probability is 1, and very
-large when a confident prediction is wrong. With a softmax output, its gradient with respect to `z` simplifies to
+Cross-entropy is minus the log of the probability given to the true class: close to 0 when that probability is close
+to 1, and very large when a confident prediction is wrong. The probabilities are clipped to `[1e-7, 1 - 1e-7]` so that
+`log(0)` can't happen; the derivatives ignore this clipping, so the gradient doesn't vanish when a prediction is
+completely wrong. With a softmax output, its gradient with respect to `z` simplifies to
 `(y_pred - y_true) / batch_size` (`softmax_crossentropy_delta`), which `output_delta` uses directly.
 
 Sigmoid and tanh saturate: for a large `|z|` their output is almost flat, so their derivative is close to 0 and the
@@ -159,8 +161,8 @@ parameter = parameter - learning_rate * m_corrected / (sqrt(v_corrected) + 1e-8)
 ```
 
 `m` and `v` start at 0, so they are too small in the first updates; dividing by `1 - beta^t` corrects that. In the
-first update the step is exactly `learning_rate * gradient / |gradient|`: about `learning_rate` in the direction of
-the gradient. The averages carry over between calls to `train`, which matters when a model is trained a little at a
+first update the step is `learning_rate * gradient / (|gradient| + 1e-8)`: about `learning_rate` against the
+direction of the gradient (unless the gradient is close to `1e-8`). The averages carry over between calls to `train`, which matters when a model is trained a little at a
 time (as the DQN agent does).
 
 On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
@@ -172,20 +174,26 @@ On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
 | SGD, `learning_rate=0.001` | 58.6% | 81.2% | 89.8% | 87.3% |
 
 Adam learns more per epoch and doesn't need a learning rate tuned to the scale of the gradients: with Adam's
-`0.001`, SGD barely moves. Each Adam update does more work, though, so an epoch took about twice as long.
+`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though, so an epoch took about twice as long.
 
 ### Weight initialization
 
 The weights start random: if they were all equal, every neuron of a layer would compute the same thing and get the
-same update forever. Their scale keeps the variance of `z` similar from layer to layer, so the signal neither explodes
-nor fades: **He** initialization (variance `2 / num_inputs`) for ReLU, which zeroes about half of its inputs, and
-**LeCun** initialization (variance `1 / num_inputs`) for the other activations. The biases start at 0.
+same update forever. Their scale aims to keep the variance of `z` similar from layer to layer, so the signal neither
+explodes nor fades: **He** initialization (variance `2 / num_inputs`) for ReLU layers, and **LeCun** initialization
+(variance `1 / num_inputs`) for the others. The biases start at 0.
+
+The factor 2 of He makes up for a ReLU zeroing about half of its outputs, so it keeps the variance exactly from one ReLU
+layer to the next. Choosing by the layer's own activation, as `add_layer` does, is the usual rule of thumb: the first
+layer, whose inputs don't come from a ReLU, doubles the variance, and a non-ReLU layer after a ReLU layer halves it.
 
 ### Gradient clipping
 
 Before backpropagation, each value of `dL/dy_pred` is limited to `[-10, 10]` (`clip_gradients`), so a single huge
-error can't produce an update large enough to make the training diverge. It doesn't apply to softmax with
-cross-entropy, whose gradient is already between -1 and 1.
+error can't produce an update large enough to make the training diverge. This gradient already includes the division
+by the batch size (and, for `mse`, by the number of outputs), so with large batches an error has to be much larger to
+be clipped: with `mse`, one output and `batch_size=1`, it happens when `|y_pred - y_true| > 5`. It doesn't apply to
+softmax with cross-entropy, whose gradient is already between `-1 / batch_size` and `1 / batch_size`.
 
 ## Usage
 
@@ -243,8 +251,9 @@ history = model.train(inputs, targets, epochs=500, learning_rate=0.01, batch_siz
 - **epochs**: number of passes over the whole dataset.
 - **learning_rate**: size of each gradient descent step.
 - **batch_size**: number of samples per update (default 32). Use 1 to update after every sample.
-- **l1_lambda**, **l2_lambda**: regularization (default 0). They add the penalty `l1 * sum(|w|) + l2 / 2 * sum(w^2)`
-  on the weights (not the biases), which pulls them towards 0 and reduces overfitting.
+- **l1_lambda**, **l2_lambda**: regularization (default 0). They add the gradient of the penalty
+  `l1 * sum(|w|) + l2 / 2 * sum(w^2)` on the weights (not the biases), which pulls them towards 0 and reduces
+  overfitting. The loss reported by `train` and `evaluate` doesn't include the penalty.
 - **shuffle**: a new random order of the samples every epoch (default True).
 - **verbose**: print the progress and the loss of each epoch (default False).
 - **validation_data**: optional `(inputs, targets)` not used for training. Its loss (and accuracy, for classification)

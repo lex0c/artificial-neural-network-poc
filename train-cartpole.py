@@ -29,7 +29,7 @@ train_dqn(
     env, model, target_model,
     episodes=500,
     batch_size=512,          # transitions sampled from the replay memory after each episode
-    gamma=0.80,              # discount factor: a reward k steps ahead counts gamma^k, so 0.8 looks about 5 steps ahead
+    gamma=0.80,              # discount factor: a reward k steps ahead counts gamma^k (0.33 after 5 steps with 0.8)
     learning_rate=0.001,
     epsilon=1.0,             # start with random actions only...
     epsilon_min=0.1,         # ...down to 10% of random actions

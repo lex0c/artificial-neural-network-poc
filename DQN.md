@@ -27,9 +27,10 @@ The agent's goal is the **return**, the sum of the rewards it will get, where a 
 return = r0 + gamma * r1 + gamma^2 * r2 + ...
 ```
 
-`gamma` (the **discount factor**, between 0 and 1) sets how far ahead the agent looks: rewards further away than about
-`1 / (1 - gamma)` steps barely count. With `gamma = 0.8`, as in `train-cartpole.py`, that is about 5 steps, and with a
-reward of 1 per step the return can't exceed `1 / (1 - 0.8) = 5`.
+`gamma` (the **discount factor**, between 0 and 1) sets how far ahead the agent looks. The weights `gamma^k` add up to
+`1 / (1 - gamma)`, often called the horizon. With `gamma = 0.8`, as in `train-cartpole.py`, the horizon is 5 steps: a
+reward 5 steps ahead still counts `0.8^5 = 0.33`, and one 20 steps ahead about 0.01. With a reward of 1 per step, the
+return is always below `1 / (1 - 0.8) = 5`.
 
 **Q(state, action)** is the return the agent can expect after taking `action` in `state` and acting well afterwards.
 If it knew the Q-values, the best policy would be simple: in each state, take the action with the highest Q-value.
@@ -41,6 +42,8 @@ action (2 Q-values).
 
 Nobody gives the network the true Q-values to learn from. The **Bellman equation** relates the Q-value of a state to
 the Q-values of the next state: the return from now is the reward now plus the discounted return from the next state.
+In an environment with randomness, it holds on average over the possible next states; CartPole is deterministic, so
+it holds exactly.
 
 ```
 Q(state, action) = reward + gamma * max over a' of Q(next_state, a')
@@ -50,8 +53,8 @@ Q(state, action) = reward                                  if the episode ended 
 So every step the agent experienced, `(state, action, reward, next_state)`, gives a target for `Q(state, action)`,
 computed with the network's own estimate for the next state. Training the network with the mean squared error towards
 these targets makes its estimates consistent with the equation, and the rewards propagate back from step to step.
-Only the output for the action that was taken gets a target; the other output keeps its current prediction, so its
-error is zero (`replay_experience` in `dqn.py`).
+Only the output for the action that was taken gets a Bellman target. The other output gets its current prediction as
+target, so at first its error is zero (`replay_experience` in `dqn.py`).
 
 Only a **terminated** episode has no future: when the episode is **truncated** by the time limit, the pole was still
 up and the future would have gone on, so the target still includes `gamma * max Q(next_state)`. That is why the
@@ -100,8 +103,13 @@ target model evaluates it.
 - **When it learns.** This project learns once per episode: it samples 512 transitions and makes one update per
   transition (`batch_size=1` in `model.train`). The original DQN makes one minibatch update after every step of the
   environment.
-- **Optimizer and loss.** Plain gradient descent with the mean squared error. The original DQN used RMSProp and clipped
-  the error, which behaves like the Huber loss.
+- **Targets of the actions not taken.** The targets of a batch are computed once, before its 512 updates. Each
+  update also changes the predictions for the other transitions, so the targets of the actions not taken (their
+  prediction before the updates) become slightly outdated, and the following updates pull those Q-values back towards
+  them. The original DQN only trains the Q-value of the action taken.
+- **Optimizer and loss.** Plain gradient descent with the mean squared error, with the error clipped to `[-10, 10]`
+  (`clip_gradients`; with one transition per update, `dL/dq` is the error itself). The original DQN used RMSProp and
+  clipped the error to `[-1, 1]`, which behaves like the Huber loss.
 
 ## Evaluation and checkpoints
 
@@ -132,7 +140,8 @@ Each episode adds a row to `metrics/cartpole.csv`, and `show-cartpole-metrics.py
 These are the results of `train-cartpole.py` over 9 seeds:
 
 - The greedy reward grows from about 90 after 100 episodes to about 420 after 500 episodes. None of the runs diverged.
-- The mean Q-value levels off at about 5.0, the value `1 / (1 - gamma)` of an agent that keeps the pole up.
+- The mean Q-value levels off just above 5.0 (about 5.02 to 5.05). The true Q-values are always below
+  `1 / (1 - gamma) = 5`, so this is a mild overestimation, the effect Double DQN reduces.
 - The policy doesn't settle: over 1000 episodes, 3 of the 9 runs fell below 300 after reaching 500. Keeping the best
   checkpoint makes the saved model better than the last one (457 against 422 on average, on episodes it never saw).
 - Within 500 episodes, `gamma = 0.8` learned the best. Higher values look further ahead, but their Q-values take
