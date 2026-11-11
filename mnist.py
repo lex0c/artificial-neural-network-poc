@@ -50,7 +50,7 @@ def read_idx(path):
 
 # Returns (train_images, train_labels), (test_images, test_labels). Each image is flattened to 784 values (the 28 x 28
 # pixels, row by row) scaled from 0-255 to 0-1, and each label is the digit.
-def load_mnist(directory=os.path.join("datasets", "mnist")):
+def load_mnist(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets", "mnist")):
     data = {name: read_idx(download(filename, sha256, directory)) for name, (filename, sha256) in FILES.items()}
 
     def flatten(images):

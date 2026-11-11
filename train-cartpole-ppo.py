@@ -1,5 +1,6 @@
 import gymnasium as gym
 
+from cli import project_path, training_args
 from data import set_seed
 from feedforward import FeedForward
 from ppo import train_ppo
@@ -8,11 +9,10 @@ from ppo import train_ppo
 # Trains a PPO agent on CartPole (see PPO.md) and saves the best policy to models/cartpole-ppo.joblib, to compare
 # with the DQN agent of train-cartpole.py.
 
-SEED = None     # set an integer (e.g. 0) to make the run reproducible
-RENDER = False  # True to watch the training episodes (much slower)
+args = training_args("Trains a PPO agent on CartPole and saves the best policy to models/cartpole-ppo.joblib.", render=True, steps=100000)
 
-env = gym.make("CartPole-v1", render_mode="human" if RENDER else None)
-set_seed(SEED, env)
+env = gym.make("CartPole-v1", render_mode="human" if args.render else None)
+set_seed(args.seed, env)
 eval_env = gym.make("CartPole-v1")  # a separate environment for the evaluations
 
 
@@ -34,7 +34,7 @@ policy.summary()
 
 train_ppo(
     env, policy, value_model,
-    total_steps=100000,
+    total_steps=args.steps,
     learning_rate=0.0003,
     num_steps=2048,          # steps played with the current policy in each iteration...
     num_epochs=10,           # ...then 10 passes over them...
@@ -46,8 +46,8 @@ train_ppo(
     eval_env=eval_env,
     eval_freq=5,             # iterations between evaluations
     eval_episodes=10,
-    metrics_filepath='metrics/cartpole-ppo.csv',  # plotted by show-metrics.py
-    checkpoint_filepath='models/cartpole-ppo.joblib',  # keeps the policy with the best evaluation
+    metrics_filepath=project_path('metrics', 'cartpole-ppo.csv'),  # plotted by show-metrics.py
+    checkpoint_filepath=project_path('models', 'cartpole-ppo.joblib'),  # keeps the policy with the best evaluation
 )
 
 

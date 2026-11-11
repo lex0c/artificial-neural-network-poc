@@ -1,4 +1,5 @@
 import csv
+import os
 
 import numpy as np
 
@@ -34,6 +35,7 @@ def evaluate_greedy(env, model, episodes=10, seed=0):
 # Adds a row of metrics to a CSV file (see show-metrics.py)
 def write_to_csv(filepath, metric):
     fieldnames = list(metric.keys())
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
 
     with open(filepath, 'a+', newline='') as file:
         file.seek(0)

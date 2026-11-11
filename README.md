@@ -93,5 +93,11 @@ python run-agent.py Acrobot-v1 models/acrobot-ppo.joblib
 python show-metrics.py metrics/acrobot-ppo.csv
 ```
 
-The training scripts have two settings at the top: `SEED`, to make a run reproducible, and, for CartPole, `RENDER`,
-to watch the training (much slower).
+Every script can be run from any directory, and `--help` shows its options. The training scripts take `--seed` to
+make a run reproducible, `--epochs`, `--episodes` or `--steps` to change the length of the training, and, for the
+environments that can be shown, `--render` to watch the training (much slower):
+
+```sh
+python train-cartpole.py --seed 0 --episodes 300
+python train-acrobot-ppo.py --render
+```

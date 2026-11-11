@@ -3,6 +3,7 @@ from datetime import datetime
 
 import numpy as np
 
+from progress import display_path, format_duration, timing
 from rl import evaluate_greedy, write_to_csv
 
 
@@ -120,17 +121,19 @@ def ppo_output_delta(probs, actions, advantages, old_action_probs, clip_range, e
 # configure(loss="mse", ...) for the value model. Returns the total reward of each finished episode.
 def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_steps=2048, minibatch_size=64,
               num_epochs=10, gamma=0.99, gae_lambda=0.95, clip_range=0.2, entropy_coef=0.0,
-              eval_env=None, eval_freq=5, eval_episodes=10, checkpoint_filepath=None, metrics_filepath=None):
+              eval_env=None, eval_freq=5, eval_episodes=10, checkpoint_filepath=None, metrics_filepath=None, log_every=5):
     if checkpoint_filepath and eval_env is None:
         raise ValueError("checkpoint_filepath needs eval_env: the checkpoint is the policy with the best evaluation")
 
     episode_rewards = []
     metrics_key = datetime.now().strftime('%Y%m%d%H%M%S')
     state, episode_reward = None, 0.0
+    training_start = time.time()
+    block_rewards = []  # rewards of the episodes finished since the last progress line
 
     if eval_env is not None:
-        best_greedy_reward = evaluate_greedy(eval_env, policy, eval_episodes)
-        print(f"greedy evaluation before training: {best_greedy_reward:.2f}")
+        best_greedy_reward, best_iteration = evaluate_greedy(eval_env, policy, eval_episodes), 0
+        print(f"Greedy evaluation before training: {best_greedy_reward:.1f}")
 
         if checkpoint_filepath:
             policy.save(checkpoint_filepath)
@@ -143,6 +146,7 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
         # 1. Collect
         rollout, state, episode_reward, finished = collect_rollout(env, policy, num_steps, state, episode_reward)
         episode_rewards += finished
+        block_rewards += finished
 
         # 2. Advantages
         values = value_model.predict(rollout["states"])[:, 0]
@@ -174,7 +178,7 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
             greedy_reward = evaluate_greedy(eval_env, policy, eval_episodes)
 
             if greedy_reward > best_greedy_reward:
-                best_greedy_reward = greedy_reward
+                best_greedy_reward, best_iteration = greedy_reward, iteration
 
                 if checkpoint_filepath:
                     policy.save(checkpoint_filepath)
@@ -197,10 +201,26 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
                 'duration': time.time() - start_time,
             })
 
-        reward_text = f"{mean_reward:.2f}" if mean_reward is not None else "-"
-        print(f"iteration: {iteration}/{num_iterations} - steps: {iteration * num_steps} - mean episode reward: {reward_text} - entropy: {metrics['entropy']:.3f} - clip fraction: {metrics['clip_fraction']:.3f}")
+        # Progress: one line every log_every iterations, with the episodes finished in them
+        if iteration % log_every == 0 or iteration == num_iterations:
+            reward_text = f"{np.mean(block_rewards):.1f} ({len(block_rewards)} episodes)" if block_rewards else "- (no episode ended)"
+            print(f"Iteration {iteration}/{num_iterations} ({iteration * num_steps:,} steps) - episode reward {reward_text} "
+                  f"- entropy {metrics['entropy']:.3f} - clip fraction {metrics['clip_fraction']:.3f} - {timing(training_start, iteration, num_iterations)}")
+            block_rewards = []
 
         if greedy_reward is not None:
-            print(f"greedy evaluation: {greedy_reward:.2f} (best: {best_greedy_reward:.2f})")
+            print(f"  Greedy evaluation: {greedy_reward:.1f} (best: {best_greedy_reward:.1f})")
+
+    print(f"\nDone in {format_duration(time.time() - training_start)}.")
+
+    if eval_env is not None:
+        when = f"after iteration {best_iteration} ({best_iteration * num_steps:,} steps)" if best_iteration else "before training"
+        print(f"Best greedy evaluation: {best_greedy_reward:.1f} ({when})")
+
+    if checkpoint_filepath:
+        print(f"Best policy saved to {display_path(checkpoint_filepath)}")
+
+    if metrics_filepath:
+        print(f"Metrics saved to {display_path(metrics_filepath)} (plot them with: python show-metrics.py {display_path(metrics_filepath)})")
 
     return episode_rewards

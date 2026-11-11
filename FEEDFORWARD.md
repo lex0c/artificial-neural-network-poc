@@ -255,7 +255,9 @@ history = model.train(inputs, targets, epochs=500, learning_rate=0.01, batch_siz
   `l1 * sum(|w|) + l2 / 2 * sum(w^2)` on the weights (not the biases), which pulls them towards 0 and reduces
   overfitting. The loss reported by `train` and `evaluate` doesn't include the penalty.
 - **shuffle**: a new random order of the samples every epoch (default True).
-- **verbose**: print the progress and the loss of each epoch (default False).
+- **verbose**: show a progress bar during each epoch and a line with the loss after it (default False).
+- **log_every**: with `verbose`, print the line of the loss only every `log_every` epochs, and after the last one
+  (default 1).
 - **validation_data**: optional `(inputs, targets)` not used for training. Its loss (and accuracy, for classification)
   is calculated after each epoch, to see whether the model generalizes or starts to overfit.
 

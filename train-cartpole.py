@@ -1,5 +1,6 @@
 import gymnasium as gym
 
+from cli import project_path, training_args
 from data import set_seed
 from dqn import train_dqn
 from feedforward import FeedForward, clone_model
@@ -7,11 +8,10 @@ from feedforward import FeedForward, clone_model
 
 # Trains a DQN agent on CartPole (see DQN.md) and saves the best model to models/cartpole.joblib.
 
-SEED = None     # set an integer (e.g. 0) to make the run reproducible
-RENDER = False  # True to watch the training episodes (much slower: rendering runs at about 50 steps per second)
+args = training_args("Trains a DQN agent on CartPole and saves the best model to models/cartpole.joblib.", render=True, episodes=500)
 
-env = gym.make("CartPole-v1", render_mode="human" if RENDER else None)
-set_seed(SEED, env)
+env = gym.make("CartPole-v1", render_mode="human" if args.render else None)
+set_seed(args.seed, env)
 eval_env = gym.make("CartPole-v1")  # a separate environment for the greedy evaluations
 
 
@@ -27,7 +27,7 @@ target_model = clone_model(model)  # gives stable Bellman targets (see DQN.md)
 
 train_dqn(
     env, model, target_model,
-    episodes=500,
+    episodes=args.episodes,
     batch_size=512,          # transitions sampled from the replay memory after each episode
     gamma=0.80,              # discount factor: a reward k steps ahead counts gamma^k (0.33 after 5 steps with 0.8)
     learning_rate=0.001,
@@ -39,8 +39,8 @@ train_dqn(
     eval_env=eval_env,
     eval_freq=50,            # episodes between greedy evaluations
     eval_episodes=10,
-    metrics_filepath='metrics/cartpole.csv',  # plotted by show-metrics.py
-    checkpoint_filepath='models/cartpole.joblib',  # keeps the model with the best greedy evaluation
+    metrics_filepath=project_path('metrics', 'cartpole.csv'),  # plotted by show-metrics.py
+    checkpoint_filepath=project_path('models', 'cartpole.joblib'),  # keeps the model with the best greedy evaluation
 )
 
 

@@ -1,5 +1,7 @@
 import copy
 import math
+import os
+import time
 
 import numpy as np
 from joblib import dump, load
@@ -11,6 +13,7 @@ from losses import (
     check_loss, clip_gradients, is_softmax_crossentropy, loss_derivative_fn, loss_fn, softmax_crossentropy_delta,
 )
 from optimizers import make_optimizer
+from progress import format_number, timing
 
 
 # NumPy's matrix products run on a math library (BLAS) that splits them across all the CPU cores. The matrices of this
@@ -129,13 +132,17 @@ class FeedForward:
     # validation_data: optional (inputs, targets) not used for training. Its loss (and accuracy, for classification)
     # is calculated after each epoch, to see whether the model generalizes or starts to overfit.
     #
+    # verbose: show a progress bar during each epoch, and a line with the loss every log_every epochs (and the last).
+    #
     # Returns self.history: the loss of each epoch, and the validation metrics.
     def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0,
-              shuffle=True, verbose=False, validation_data=None):
+              shuffle=True, verbose=False, validation_data=None, log_every=1):
         inputs, targets = self.prepare_dataset(inputs, targets)
         inputs = self.normalize(inputs)  # once for the whole dataset (train_step expects normalized inputs)
         num_batches = math.ceil(len(inputs) / batch_size)
         self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
+        start_time = time.time()
+        progress_line = ""
 
         for epoch in range(epochs):
             order = np.random.permutation(len(inputs)) if shuffle else np.arange(len(inputs))
@@ -149,23 +156,27 @@ class FeedForward:
                 if verbose:
                     filled = round(30 * batch_count / num_batches)
                     progress_bar = '#' * filled + '.' * (30 - filled)
-                    print(f"> Epoch: {epoch+1}/{epochs}, Batch: {batch_count}/{num_batches} [{progress_bar}] - batch_loss: {batch_loss}", end='\r', flush=True)
+                    progress_line = f"Epoch {epoch+1}/{epochs} [{progress_bar}] batch {batch_count}/{num_batches} - loss {format_number(batch_loss)}"
+                    print("\r" + progress_line, end="", flush=True)  # the next one is written over it
 
             self.history["loss"].append(epoch_loss / len(inputs))
-            summary = f"Epoch: {epoch+1}/{epochs}, Loss: {self.history['loss'][-1]}"
+            summary = f"Epoch {epoch+1}/{epochs} - loss {format_number(self.history['loss'][-1])}"
 
             if validation_data is not None:
                 val_loss, val_accuracy = self.evaluate(*validation_data)
                 self.history["val_loss"].append(val_loss)
                 self.history["val_accuracy"].append(val_accuracy)
 
-                summary += f", Val Loss: {val_loss}"
+                summary += f" - val_loss {format_number(val_loss)}"
                 if val_accuracy is not None:
-                    summary += f", Val Accuracy: {val_accuracy:.4f}"
+                    summary += f" - val_accuracy {val_accuracy:.4f}"
 
-            if verbose:
-                print('')  # ends the progress bar line
-                print(f"{summary}, LR: {learning_rate}")
+            if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs):
+                summary += f" - {timing(start_time, epoch + 1, epochs)}"
+                print("\r" + summary.ljust(len(progress_line)))  # replaces the progress bar of the epoch
+
+        if verbose:
+            print("\r" + " " * len(progress_line), end="\r")  # clears a progress bar left by an epoch without summary
 
         return self.history
 
@@ -243,7 +254,7 @@ class FeedForward:
         self.optimizer.update(self.layers, gradients, learning_rate)
 
     def summary(self):
-        print("\n")
+        print()
         print("Model Summary")
         print("--------------")
 
@@ -267,7 +278,7 @@ class FeedForward:
 
         if "normalization" in self.configs:
             print(f"Input Normalization: {self.configs['normalization']['method']}")
-        print("\n")
+        print()
 
     # Brings a dataset to the shapes the training expects: inputs (num_samples, num_inputs) and targets
     # (num_samples, num_outputs), or class indices for sparse_categorical_crossentropy.
@@ -347,6 +358,7 @@ class FeedForward:
 
     # Saves the parameters of each layer and the configs (not the cache of the last forward pass).
     def save(self, filepath):
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
         dump({"layers": self.layers, "configs": self.configs}, filepath)
 
     def get_layers(self):

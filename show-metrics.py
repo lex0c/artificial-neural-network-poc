@@ -1,9 +1,12 @@
+import argparse
 import math
 import os
 import sys
 
 import pandas as pd
 import matplotlib.pyplot as plt
+
+from cli import display_path, project_path
 
 
 # Plots the metrics that train_dqn and train_ppo write to a CSV file (metrics_filepath): one chart per column, against
@@ -13,10 +16,13 @@ import matplotlib.pyplot as plt
 #   python show-metrics.py metrics/cartpole.csv
 #   python show-metrics.py metrics/acrobot-ppo.csv
 
-if len(sys.argv) < 2:
-    sys.exit("usage: python show-metrics.py <metrics file>")
+parser = argparse.ArgumentParser(description="Plots the metrics of a DQN or PPO training.")
+parser.add_argument("metrics", help="metrics file, e.g. metrics/cartpole.csv")
+metrics_filepath = parser.parse_args().metrics
 
-metrics_filepath = sys.argv[1]
+if not os.path.exists(metrics_filepath):
+    sys.exit(f"{metrics_filepath} not found: the training scripts write their metrics to metrics/ (e.g. python train-cartpole.py)")
+
 name = os.path.splitext(os.path.basename(metrics_filepath))[0]  # e.g. cartpole
 
 data = pd.read_csv(metrics_filepath)
@@ -44,5 +50,7 @@ for key in data['metrics_key'].unique():
         ax.set_xlabel(x.capitalize())
 
     plt.tight_layout(pad=3.0)
-    plt.savefig(f'{name}_{key}.png', dpi=150)
+    figure_filepath = project_path(f'{name}_{key}.png')
+    plt.savefig(figure_filepath, dpi=150)
     plt.close(fig)
+    print(f"Metrics of the run {key} saved to {display_path(figure_filepath)}")

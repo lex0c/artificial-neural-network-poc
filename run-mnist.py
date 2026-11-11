@@ -2,14 +2,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import classification_report, confusion_matrix
 
-from feedforward import load_model
+from cli import display_path, load_trained_model, project_path
 from mnist import load_mnist
 
 
 # Evaluates the model saved by train-mnist.py on the 10,000 test images: prints the accuracy, the precision, recall and
 # F1 of each digit and the confusion matrix, and saves the first mistakes to mnist-errors.png.
 
-model = load_model('models/mnist.joblib')
+model = load_trained_model(project_path('models', 'mnist.joblib'), 'train-mnist.py')
 model.summary()
 
 _, (test_images, test_labels) = load_mnist()
@@ -36,4 +36,6 @@ for ax, i in zip(axs.ravel(), mistakes):
     ax.set_title(f"predicted {predicted_labels[i]} ({probabilities[i, predicted_labels[i]]:.0%})\ntrue {test_labels[i]}", fontsize=10)
 
 plt.tight_layout()
-plt.savefig('mnist-errors.png', dpi=150)
+figure_filepath = project_path('mnist-errors.png')
+plt.savefig(figure_filepath, dpi=150)
+print(f"\nThe first mistakes saved to {display_path(figure_filepath)}")

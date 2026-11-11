@@ -5,6 +5,7 @@ from datetime import datetime
 
 import numpy as np
 
+from progress import display_path, format_duration, format_number, timing
 from rl import evaluate_greedy, write_to_csv
 
 
@@ -159,7 +160,7 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
               l1_lambda=0.0, l2_lambda=0.0,
               target_update_freq=10, double_dqn=False, memory_size=100000, minibatch_size=1, max_repeat=1,
               eval_env=None, eval_freq=50, eval_episodes=10,
-              checkpoint_filepath=None, metrics_filepath=None):
+              checkpoint_filepath=None, metrics_filepath=None, log_every=10):
     if checkpoint_filepath and eval_env is None:
         raise ValueError("checkpoint_filepath needs eval_env: the checkpoint is the model with the best greedy evaluation")
 
@@ -167,10 +168,11 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
     rolling_rewards = deque(maxlen=100)
     episode_rewards = []
     metrics_key = datetime.now().strftime('%Y%m%d%H%M%S')
+    training_start = time.time()
 
     if eval_env is not None:
-        best_greedy_reward = evaluate_greedy(eval_env, model, eval_episodes)
-        print(f"greedy evaluation before training: {best_greedy_reward:.2f}")
+        best_greedy_reward, best_episode = evaluate_greedy(eval_env, model, eval_episodes), 0
+        print(f"Greedy evaluation before training: {best_greedy_reward:.1f}")
 
         if checkpoint_filepath:
             model.save(checkpoint_filepath)
@@ -196,7 +198,7 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
             greedy_reward = evaluate_greedy(eval_env, model, eval_episodes)
 
             if greedy_reward > best_greedy_reward:
-                best_greedy_reward = greedy_reward
+                best_greedy_reward, best_episode = greedy_reward, e + 1
 
                 if checkpoint_filepath:
                     model.save(checkpoint_filepath)
@@ -216,10 +218,14 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
                 'learning_rate': learning_rate
             })
 
-        print(f"episode: {e+1}/{episodes} - reward: {total_reward:.2f} - duration: {episode_duration:.2f}s - epsilon: {epsilon:.3f} - steps: {steps}")
+        # Progress: one line every log_every episodes, with the rewards of those episodes
+        if (e + 1) % log_every == 0 or e + 1 == episodes:
+            block = episode_rewards[-((e % log_every) + 1):]
+            print(f"Episodes {e + 2 - len(block)}-{e + 1}/{episodes} - reward mean {sum(block) / len(block):.1f}, max {max(block):.0f} "
+                  f"- epsilon {epsilon:.3f} - loss {format_number(loss)} - {timing(training_start, e + 1, episodes)}")
 
         if greedy_reward is not None:
-            print(f"greedy evaluation: {greedy_reward:.2f} (best: {best_greedy_reward:.2f})")
+            print(f"  Greedy evaluation: {greedy_reward:.1f} (best: {best_greedy_reward:.1f})")
 
         # 4. Schedules
         epsilon = max(epsilon_min, epsilon * epsilon_decay)
@@ -230,5 +236,17 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
         # 5. Target model
         if e % target_update_freq == 0:
             target_model.set_layers(model.get_layers())
+
+    print(f"\nDone in {format_duration(time.time() - training_start)}.")
+
+    if eval_env is not None:
+        when = f"after episode {best_episode}" if best_episode else "before training"
+        print(f"Best greedy evaluation: {best_greedy_reward:.1f} ({when})")
+
+    if checkpoint_filepath:
+        print(f"Best model saved to {display_path(checkpoint_filepath)}")
+
+    if metrics_filepath:
+        print(f"Metrics saved to {display_path(metrics_filepath)} (plot them with: python show-metrics.py {display_path(metrics_filepath)})")
 
     return episode_rewards
