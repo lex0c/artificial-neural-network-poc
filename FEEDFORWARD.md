@@ -28,7 +28,8 @@ non-linearity of `f` is what lets a network learn curved relationships.
    weight changes a little. All these derivatives together are the gradient.
 3. **Update.** The gradient points to where the loss grows the fastest, so each weight takes a small step the other
    way: `weight = weight - learning_rate * gradient`. The learning rate sets the size of the step. Too small learns
-   slowly, and too large overshoots and can diverge.
+   slowly, and too large overshoots and can diverge. This is plain gradient descent (SGD); the
+   [Adam optimizer](#optimizers-optimizerspy) adapts the step of each weight.
 
 Repeating these steps over the data lowers the loss. This is `train_step` in `feedforward.py`:
 
@@ -118,6 +119,7 @@ model towards it.
 | --- | --- | --- | --- |
 | `relu` | `max(0, z)` | `1` if `z > 0`, else `0` | hidden layers |
 | `sigmoid` | `1 / (1 + e^-z)`, in `(0, 1)` | `s * (1 - s)` | a probability, e.g. binary classification |
+| `tanh` | `(e^z - e^-z) / (e^z + e^-z)`, in `(-1, 1)` | `1 - tanh(z)^2` | hidden layers (the usual choice before ReLU) |
 | `linear` | `z` | `1` | output of a regression, Q-values |
 | `softmax` | `e^z[j] / sum of e^z[k]`, sums to 1 | a Jacobian, see `activation_backward` | output of a multi-class classifier |
 
@@ -132,6 +134,45 @@ model towards it.
 Cross-entropy is minus the log of the probability given to the true class: 0 when that probability is 1, and very
 large when a confident prediction is wrong. With a softmax output, its gradient with respect to `z` simplifies to
 `(y_pred - y_true) / batch_size` (`softmax_crossentropy_delta`), which `output_delta` uses directly.
+
+Sigmoid and tanh saturate: for a large `|z|` their output is almost flat, so their derivative is close to 0 and the
+gradient fades as it goes back through many such layers. ReLU doesn't saturate for positive `z`, which is why it
+replaced them in hidden layers.
+
+### Optimizers (`optimizers.py`)
+
+The optimizer is the last step of `train_step`: it decides how the gradients change the parameters.
+
+- **SGD** (the default): `parameter = parameter - learning_rate * gradient`. The step is proportional to the gradient,
+  so parameters with small gradients learn slowly, and one learning rate has to suit all of them.
+- **Adam**: keeps, for each parameter, a running mean of its gradients (`m`, a momentum: steps keep their direction when
+  the gradients agree) and of its squared gradients (`v`, how large its gradients usually are), and moves it by
+  `learning_rate * m / sqrt(v)`. Dividing by `sqrt(v)` gives every parameter a step of about `learning_rate`, whatever
+  the scale of its gradients.
+
+```
+m = beta1 * m + (1 - beta1) * gradient          beta1 = 0.9
+v = beta2 * v + (1 - beta2) * gradient^2        beta2 = 0.999
+m_corrected = m / (1 - beta1^t)                 t: number of updates so far
+v_corrected = v / (1 - beta2^t)
+parameter = parameter - learning_rate * m_corrected / (sqrt(v_corrected) + 1e-8)
+```
+
+`m` and `v` start at 0, so they are too small in the first updates; dividing by `1 - beta^t` corrects that. In the
+first update the step is exactly `learning_rate * gradient / |gradient|`: about `learning_rate` in the direction of
+the gradient. The averages carry over between calls to `train`, which matters when a model is trained a little at a
+time (as the DQN agent does).
+
+On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
+
+| Optimizer | After 1 epoch | After 3 epochs | After 10 epochs | Test |
+| --- | --- | --- | --- | --- |
+| Adam, `learning_rate=0.001` | 96.2% | 97.4% | 98.0% | 97.8% |
+| SGD, `learning_rate=0.1` | 93.6% | 96.5% | 97.8% | 97.4% |
+| SGD, `learning_rate=0.001` | 58.6% | 81.2% | 89.8% | 87.3% |
+
+Adam learns more per epoch and doesn't need a learning rate tuned to the scale of the gradients: with Adam's
+`0.001`, SGD barely moves. Each Adam update does more work, though, so an epoch took about twice as long.
 
 ### Weight initialization
 
@@ -155,7 +196,7 @@ from feedforward import FeedForward
 
 model = FeedForward()
 model.add_layer(num_inputs=1, num_neurons=1, act_fn='linear')
-model.configure(loss='mse')
+model.configure(loss='mse')  # optimizer='sgd' by default; optimizer='adam' for Adam
 model.summary()
 ```
 

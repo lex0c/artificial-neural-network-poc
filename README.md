@@ -18,8 +18,9 @@ python -m unittest -v   # optional: checks that everything works
    gradient descent), with one training step worked out by hand.
 2. **The framework**:
    - `feedforward.py`: the `FeedForward` model. Start with `train_step`, which calls the five steps of a training step.
-   - `activations.py`: ReLU, sigmoid, linear and softmax, and their derivatives.
+   - `activations.py`: ReLU, sigmoid, tanh, linear and softmax, and their derivatives.
    - `losses.py`: mean squared error and cross-entropy, and their derivatives.
+   - `optimizers.py`: plain gradient descent (SGD) and Adam.
    - `data.py`: one-hot encoding, normalization, batches and seeds.
 3. **The examples**, from the simplest (below).
 4. **[DQN.md](DQN.md)** and `dqn.py`: reinforcement learning with a Deep Q-Network.
@@ -51,7 +52,18 @@ python train-weather.py   # trains and saves models/weather.joblib
 python run-weather.py     # per-class report and confusion-matrix.png, on new data
 ```
 
-### 3. Reinforcement learning: CartPole
+### 3. Handwritten digits: MNIST
+
+A network with one hidden layer of 128 neurons learns to recognize handwritten digits in 28 x 28 images, 784 pixels
+per image. It reaches about 97.7% on the 10,000 test images in 10 epochs. It shows a real dataset, the Adam optimizer
+and validation. `mnist.py` downloads the dataset once (about 11 MB) into `datasets/mnist/` and reads its file format.
+
+```sh
+python train-mnist.py   # trains and saves models/mnist.joblib (about 20 seconds)
+python run-mnist.py     # per-digit report, confusion matrix, and the first mistakes in mnist-errors.png
+```
+
+### 4. Reinforcement learning: CartPole
 
 A [Deep Q-Network](DQN.md) learns to balance a pole on a cart
 ([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)).

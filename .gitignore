@@ -4,3 +4,6 @@ pocenv
 # Outputs of the scripts
 *.png
 metrics/*.csv
+
+# Downloaded datasets
+datasets/
