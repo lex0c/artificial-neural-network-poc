@@ -827,7 +827,7 @@ function healthChecks(model) {
         checks.push(dead / neurons >= DEAD_LIMIT
           ? [false, `${name}: ${dead} of ${neurons} neurons gave 0 for all ${samples} inputs. A neuron that is always off stops learning (a "dead" ReLU).`]
           : [true, `${name}: ${neurons - dead} of ${neurons} neurons respond to some of the ${samples} inputs` +
-                   (dead ? ` (the other ${dead} were off for all of them).` : ".")]);
+                   (dead ? ` (the other ${dead} ${dead === 1 ? "was" : "were"} off for all of them).` : ".")]);
       } else if (layer.act_fn === "sigmoid" || layer.act_fn === "tanh") {
         const fraction = saturatedFraction(layer.act_fn, out.values);
         const limits = layer.act_fn === "tanh" ? "-1 or 1" : "0 or 1";
