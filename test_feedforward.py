@@ -308,6 +308,40 @@ class KnownValuesTest(unittest.TestCase):
         np.testing.assert_allclose(softmax_crossentropy_delta("sparse_categorical_crossentropy", self.CLASSES, self.PREDICTIONS), expected)
 
 
+class WorkedExampleTest(unittest.TestCase):
+    def test_worked_example_in_feedforward_md(self):
+        # The training step worked out by hand in FEEDFORWARD.md: y = w * x + b with w = 0.5, b = 0,
+        # one sample x = 3 with target 5, mean squared error and learning rate 0.01
+        model = FeedForward()
+        model.add_layer(num_inputs=1, num_neurons=1, act_fn="linear")
+        model.configure(loss="mse")
+        model.layers[0]["weights"][:] = 0.5
+        x, y = np.array([[3.0]]), np.array([[5.0]])
+
+        y_hat = model.forward_layers(x)
+        np.testing.assert_allclose(y_hat, [[1.5]])                    # 1. forward
+        self.assertAlmostEqual(loss_fn("mse", y, y_hat), 12.25)      # 2. loss
+
+        delta = model.output_delta(y, y_hat)
+        np.testing.assert_allclose(delta, [[-7.0]])                   # 3. output delta
+
+        [(grad_weights, grad_biases)] = model.backward(delta)
+        np.testing.assert_allclose(grad_weights, [[-21.0]])           # 4. backward
+        np.testing.assert_allclose(grad_biases, [-7.0])
+
+        model.update([(grad_weights, grad_biases)], learning_rate=0.01)
+        np.testing.assert_allclose(model.layers[0]["weights"], [[0.71]])  # 5. update
+        np.testing.assert_allclose(model.layers[0]["biases"], [0.07])
+
+        self.assertAlmostEqual(loss_fn("mse", y, model.forward_layers(x)), 7.84)
+
+        # train_step runs the same five steps
+        model.layers[0]["weights"][:] = 0.5
+        model.layers[0]["biases"][:] = 0.0
+        self.assertAlmostEqual(model.train_step(x, y, learning_rate=0.01), 12.25)
+        np.testing.assert_allclose(model.layers[0]["weights"], [[0.71]])
+
+
 class MetricsTest(unittest.TestCase):
     def linear_model(self):
         # y = 2x - 1 exactly

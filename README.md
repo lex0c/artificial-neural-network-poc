@@ -1,64 +1,70 @@
 # Neural Network POC
 
-This framework is designed for educational and prototyping purposes.
+A small neural network framework written with NumPy only, to learn how neural networks and Deep Q-Learning work.
+Every step, from the forward pass to backpropagation and the DQN training loop, is plain code meant to be read.
 
-- [FeedForward](/FEEDFORWARD.md)
-
-## Run
+## Setup
 
 Requires Python 3.12 or newer.
 
 ```sh
 pip install -r requirements.txt
+python -m unittest -v   # optional: checks that everything works
 ```
 
-### simple_linear_function
+## Reading order
 
-`Y = 2X - 1`
+1. **[FEEDFORWARD.md](FEEDFORWARD.md)**: how a network computes and learns (forward pass, loss, backpropagation,
+   gradient descent), with one training step worked out by hand.
+2. **The framework**:
+   - `feedforward.py`: the `FeedForward` model. Start with `train_step`, which calls the five steps of a training step.
+   - `activations.py`: ReLU, sigmoid, linear and softmax, and their derivatives.
+   - `losses.py`: mean squared error and cross-entropy, and their derivatives.
+   - `data.py`: one-hot encoding, normalization, batches and seeds.
+3. **The examples**, from the simplest (below).
+4. **[DQN.md](DQN.md)** and `dqn.py`: reinforcement learning with a Deep Q-Network.
+5. **The tests**: `test_feedforward.py` checks backpropagation against gradients measured numerically, and
+   `test_dqn.py` computes DQN and Double DQN targets on a tiny example you can follow by hand.
 
-Predict
+The `models/` folder has trained models, so the `run` scripts work right away.
+
+## Examples
+
+### 1. Linear regression: y = 2x - 1
+
+A single neuron learns `y = w * x + b`, and training should find `w = 2` and `b = -1`. FEEDFORWARD.md works out one
+of its training steps by hand.
 
 ```sh
-python run.py
+python train.py   # trains and saves models/simple_linear_function.joblib
+python run.py     # predicts a few values with it
 ```
 
-Train
+### 2. Classification: weather conditions
+
+A network with a hidden layer predicts the weather condition (Sunny, Cloudy, Rainy or Snowy) from the temperature,
+humidity and wind speed. It shows softmax, cross-entropy, input normalization and validation. The synthetic data
+comes from `weather.py`.
 
 ```sh
-python train.py
+python train-weather.py   # trains and saves models/weather.joblib
+python run-weather.py     # per-class report and confusion-matrix.png, on new data
 ```
 
-### [cartpole](https://gymnasium.farama.org/environments/classic_control/cart_pole)
+### 3. Reinforcement learning: CartPole
 
-Implementation of a Deep Q-Network (DQN) agent. The training loop lives in `dqn.py`; pass `double_dqn=True` to `train_dqn` to use Double DQN.
-
-Every 50 episodes the training evaluates the greedy policy (no exploration) over 10 episodes, and the model with the best evaluation is saved: the DQN policy often gets worse after reaching its best, so the last model isn't necessarily the best one. The metrics in `metrics/cartpole.csv` include the greedy reward and the mean Q-value, which should level off near `1 / (1 - gamma)` when the agent keeps the pole up.
-
-Run the trained model
+A [Deep Q-Network](DQN.md) learns to balance a pole on a cart
+([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)).
 
 ```sh
-python run-cartpole.py
+python train-cartpole.py          # trains and saves the best model to models/cartpole.joblib
+python run-cartpole.py            # watch it play (models/cartpole.joblib, or another file as argument)
+python show-cartpole-metrics.py   # plots metrics/cartpole.csv to cartpole_<run>.png
 ```
 
-Fine-tuning the model
-```sh
-python finetune-cartpole.py
-```
+`finetune-cartpole.py` continues training `models/cartpole.joblib` with less exploration, and saves the best model to
+`models/cartpole-checkpoint.joblib` (watch it with `python run-cartpole.py models/cartpole-checkpoint.joblib`) and
+the last one to `models/cartpole-finetuned.joblib`.
 
-Train model
-```sh
-python train-cartpole.py
-```
-
-Show training metrics
-```sh
-python show-cartpole-metrics.py
-```
-
-## Tests
-
-Checks the backpropagation against numerical gradients, among other things. They also run on GitHub Actions for every pull request:
-
-```sh
-python -m unittest -v
-```
+The training scripts have two settings at the top: `SEED`, to make a run reproducible, and, for CartPole, `RENDER`,
+to watch the training (much slower).
