@@ -121,7 +121,7 @@ starting with the model before the training: `train-cartpole.py` saves it to `mo
 ## Reading the metrics
 
 With `metrics_filepath` (`metrics/cartpole.csv` in `train-cartpole.py`), each episode adds a row of metrics to that
-file, and `python show-dqn-metrics.py metrics/cartpole.csv` plots them:
+file, and `python show-metrics.py metrics/cartpole.csv` plots them:
 
 - **total_reward**: the reward of the training episode, with exploration. Noisy.
 - **average_rolling_reward**: the mean over the last 100 episodes. Smooth, but it hides drops of the policy.
@@ -152,7 +152,8 @@ These are the results of `train-cartpole.py` over 9 seeds:
 
 `train_dqn` isn't tied to CartPole: it works with any Gymnasium environment whose actions are discrete (one Q-value per
 action) and whose state is a vector of numbers. The Q-network needs one input per number of the state and one linear
-output per action:
+output per action, and every environment needs its own hyperparameters. For Acrobot (a two-link arm that has to swing
+its tip above a line, with a reward of -1 per step, up to 500 steps):
 
 ```python
 env, eval_env = gym.make("Acrobot-v1"), gym.make("Acrobot-v1")
@@ -164,24 +165,32 @@ model.configure(loss="mse")
 model.fit_normalization([env.observation_space.low, env.observation_space.high])  # when the state has known limits
 
 train_dqn(env, model, clone_model(model), episodes=300, batch_size=4096, minibatch_size=64, gamma=0.99,
-          learning_rate=0.05, epsilon_decay=0.97, epsilon_min=0.05, target_update_freq=1,
+          learning_rate=0.05, epsilon_decay=0.97, epsilon_min=0.05, max_repeat=10, target_update_freq=1,
           eval_env=eval_env, eval_freq=25, checkpoint_filepath='models/acrobot.joblib')
 ```
 
-Then `python run-dqn.py Acrobot-v1 models/acrobot.joblib` shows it playing. The hyperparameters of CartPole don't
-carry over: every environment needs its own. Acrobot (a two-link arm that has to swing its tip above a line, with a
-reward of -1 per step, up to 500 steps) shows why:
+Then `python run-agent.py Acrobot-v1 models/acrobot.joblib` shows it playing.
 
-- Reaching the goal takes about 100 steps, so it needs `gamma = 0.99`, which looks about 100 steps ahead.
-- With that horizon, the information about the goal has to travel back over many steps, one target-model copy at a
-  time, so the target model has to be refreshed after every episode (`target_update_freq=1`).
-- Single-transition steps were too noisy to learn: minibatches of 64 transitions made the difference.
+Acrobot is much harder for DQN than CartPole, and it shows the limits of the algorithm well. These are the findings,
+each measured over 9 seeds:
 
-With the settings above, the best greedy evaluation reached about -100 (close to the -100 usually considered solved)
-in about half of the runs. The others stayed far from it, and two of nine never left -500. A random policy reaches the goal in only about
-3% of the episodes, so a run that doesn't find it early has nothing to learn from: the Q-values of every state stay
-alike. This is the classic weakness of epsilon-greedy exploration when rewards are rare, and why harder environments
-such as MountainCar, whose goal a random policy practically never reaches, need better exploration methods.
+- **Exploration.** Reaching the goal takes about 100 steps of coordinated swinging. A random action at every step
+  mostly cancels out: a random policy reaches the goal in only about 1.5% to 3% of the episodes, and a run that never
+  finds it has nothing to learn from (every state looks the same). Holding each random action for a few steps
+  (`max_repeat=10`, the "temporally extended" or ez-greedy exploration of Dabney et al. 2020) builds momentum: random
+  play then reaches the goal in about 32% of the episodes, and every run finds it.
+- **Horizon.** With the goal about 100 steps away, it needs `gamma = 0.99`, and the information about the goal has to
+  travel back one target-model copy at a time, so the target model is refreshed after every episode. Then the model
+  and the target model are identical when the targets are computed, which makes Double DQN give exactly the same
+  targets as DQN: Double DQN only matters when the target model lags behind.
+- **Stability.** Even when it finds the goal, the policy doesn't settle: it reaches about -100 (close to the -100
+  usually considered solved), then falls back to a swing that never reaches the goal (-500). The best checkpoint was
+  good in 2 to 7 of the 9 runs, depending on the random numbers. Learning after every step with minibatches of 128,
+  as the original DQN does (with Adam, the Huber loss and a network of 256 x 256), made the best checkpoint good in
+  8 of 9 runs, but the last model was still at -500 in 6 of them.
+
+[PPO](PPO.md) learns Acrobot reliably, in 9 runs of 9 with the same code base. Policy gradient methods like PPO are
+usually more stable than DQN, which estimates values and derives the policy from them.
 
 ## Things to try
 

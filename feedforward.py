@@ -67,10 +67,13 @@ class FeedForward:
             "act_fn": act_fn,
         })
 
-    # loss: the loss function to minimize (see losses.py)
+    # loss: the loss function to minimize (see losses.py), or None when the gradient comes from outside the model, as in
+    #       PPO (see ppo.py), which then calls forward_layers, backward and update itself
     # optimizer: how the gradients update the parameters, "sgd" or "adam" (see optimizers.py)
     def configure(self, loss, optimizer="sgd"):
-        check_loss(loss)
+        if loss is not None:
+            check_loss(loss)
+
         self.configs["loss"] = loss
         self.configs["optimizer"] = optimizer
         self.optimizer = make_optimizer(optimizer)  # a new optimizer starts without the state of the previous one

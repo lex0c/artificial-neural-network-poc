@@ -23,9 +23,13 @@ python -m unittest -v   # optional: checks that everything works
    - `optimizers.py`: plain gradient descent (SGD) and Adam.
    - `data.py`: one-hot encoding, normalization, batches and seeds.
 3. **The examples**, from the simplest (below).
-4. **[DQN.md](DQN.md)** and `dqn.py`: reinforcement learning with a Deep Q-Network.
-5. **The tests**: `test_feedforward.py` checks backpropagation against gradients measured numerically, and
-   `test_dqn.py` computes DQN and Double DQN targets on a tiny example you can follow by hand.
+4. **Reinforcement learning**:
+   - [DQN.md](DQN.md) and `dqn.py`: a Deep Q-Network, which learns the value of each action.
+   - [PPO.md](PPO.md) and `ppo.py`: Proximal Policy Optimization, which learns the policy directly.
+   - `rl.py`: the evaluation and metrics shared by both.
+5. **The tests**: `test_feedforward.py` checks backpropagation against gradients measured numerically,
+   `test_dqn.py` computes DQN and Double DQN targets on a tiny example you can follow by hand, and `test_ppo.py`
+   checks the PPO gradient numerically and computes advantages by hand.
 
 The `models/` folder has trained models, so the `run` scripts work right away.
 
@@ -63,22 +67,30 @@ python train-mnist.py   # trains and saves models/mnist.joblib (about 20 seconds
 python run-mnist.py     # per-digit report, confusion matrix, and the first mistakes in mnist-errors.png
 ```
 
-### 4. Reinforcement learning: CartPole
+### 4. Reinforcement learning: CartPole and Acrobot
 
-A [Deep Q-Network](DQN.md) learns to balance a pole on a cart
-([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)).
+Two agents learn to balance a pole on a cart ([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)):
+a [Deep Q-Network](DQN.md), which learns the value of each action, and [PPO](PPO.md), which learns the policy directly.
 
 ```sh
-python train-cartpole.py                                # trains and saves the best model to models/cartpole.joblib
-python run-dqn.py CartPole-v1 models/cartpole.joblib    # watch it play
-python show-dqn-metrics.py metrics/cartpole.csv         # plots the training metrics to cartpole_<run>.png
+python train-cartpole.py                                  # DQN: saves the best model to models/cartpole.joblib
+python train-cartpole-ppo.py                              # PPO: saves the best policy to models/cartpole-ppo.joblib
+python run-agent.py CartPole-v1 models/cartpole.joblib    # watch an agent play (any of the two files)
+python show-metrics.py metrics/cartpole.csv               # plots the training metrics to cartpole_<run>.png
 ```
 
-`finetune-cartpole.py` continues training `models/cartpole.joblib` with less exploration, and saves the best model to
+PPO reaches the maximum of 500 in every run and stays there, while DQN averages about 420 to 450 and oscillates.
+`finetune-cartpole.py` continues training the DQN model with less exploration, and saves the best model to
 `models/cartpole-checkpoint.joblib` and the last one to `models/cartpole-finetuned.joblib`.
 
-The DQN code (`dqn.py`, `run-dqn.py` and `show-dqn-metrics.py`) isn't tied to CartPole: it works with other Gymnasium
-environments with discrete actions, as DQN.md explains.
+PPO also learns a harder environment, [Acrobot](https://gymnasium.farama.org/environments/classic_control/acrobot), a
+two-link arm that has to swing its tip above a line, where DQN isn't reliable (see "Other environments" in DQN.md):
+
+```sh
+python train-acrobot-ppo.py                                  # about 2 minutes: saves models/acrobot-ppo.joblib
+python run-agent.py Acrobot-v1 models/acrobot-ppo.joblib
+python show-metrics.py metrics/acrobot-ppo.csv
+```
 
 The training scripts have two settings at the top: `SEED`, to make a run reproducible, and, for CartPole, `RENDER`,
 to watch the training (much slower).
