@@ -47,6 +47,11 @@ class CliTest(unittest.TestCase):
         self.assertEqual((args.seed, args.epochs), (None, 10))
         self.assertFalse(hasattr(args, "render"))
 
+    def test_training_length_must_be_positive(self):
+        with mock.patch.object(sys, "argv", ["train.py", "--steps", "0"]), mock.patch("sys.stderr"):
+            with self.assertRaises(SystemExit):  # argparse prints the error and exits
+                cli.training_args("test", steps=1000)
+
     def test_missing_model_explains_how_to_train_it(self):
         with self.assertRaises(SystemExit) as error:
             cli.load_trained_model(os.path.join("models", "missing.joblib"), "train-weather.py")

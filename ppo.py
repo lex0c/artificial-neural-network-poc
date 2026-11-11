@@ -1,3 +1,4 @@
+import math
 import time
 from datetime import datetime
 
@@ -108,13 +109,16 @@ def ppo_output_delta(probs, actions, advantages, old_action_probs, clip_range, e
     return delta, {"loss": loss, "entropy": float(np.mean(entropy)), "clip_fraction": float(np.mean(~through))}
 
 
-# Trains a PPO agent, updating the policy and the value model in place. Each iteration:
-#   1. collect: play num_steps steps with the current policy
+# Trains a PPO agent for total_steps steps of the environment, updating the policy and the value model in place. Each
+# iteration:
+#   1. collect: play num_steps steps with the current policy (the last iteration plays the steps left, when num_steps
+#      doesn't divide total_steps)
 #   2. advantages: compute them with GAE, using the value model
 #   3. learn: num_epochs passes over the collected steps, in random minibatches of at most minibatch_size steps; each
 #      minibatch updates the policy with the PPO gradient and the value model towards the returns (mean squared error)
 #   4. evaluate: every eval_freq iterations, play eval_episodes with the most likely action in eval_env, and save the
-#      checkpoint when it is the best so far (starting with the policy before the training)
+#      checkpoint when it is the best so far (starting with the policy before the training). A training shorter than
+#      eval_freq iterations is evaluated at its end, so its checkpoint isn't left with the untrained policy.
 # The data is then thrown away: PPO only learns from steps played with the current policy (on-policy).
 #
 # Both models need configure(loss=None, optimizer=...) for the policy (its gradient comes from ppo_output_delta) and
@@ -125,6 +129,10 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
     if checkpoint_filepath and eval_env is None:
         raise ValueError("checkpoint_filepath needs eval_env: the checkpoint is the policy with the best evaluation")
 
+    for name, value in (("total_steps", total_steps), ("num_steps", num_steps), ("minibatch_size", minibatch_size)):
+        if value < 1:
+            raise ValueError(f"{name} must be at least 1, got {value}")
+
     episode_rewards = []
     metrics_key = datetime.now().strftime('%Y%m%d%H%M%S')
     state, episode_reward = None, 0.0
@@ -132,19 +140,22 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
     block_rewards = []  # rewards of the episodes finished since the last progress line
 
     if eval_env is not None:
-        best_greedy_reward, best_iteration = evaluate_greedy(eval_env, policy, eval_episodes), 0
+        best_greedy_reward, best_iteration, best_steps = evaluate_greedy(eval_env, policy, eval_episodes), 0, 0
         print(f"Greedy evaluation before training: {best_greedy_reward:.1f}")
 
         if checkpoint_filepath:
             policy.save(checkpoint_filepath)
 
-    num_iterations = total_steps // num_steps
+    num_iterations = math.ceil(total_steps / num_steps)  # rounded up: the last iteration plays the steps left
+    steps_done = 0
 
     for iteration in range(1, num_iterations + 1):
         start_time = time.time()
+        rollout_steps = min(num_steps, total_steps - steps_done)
+        steps_done += rollout_steps
 
         # 1. Collect
-        rollout, state, episode_reward, finished = collect_rollout(env, policy, num_steps, state, episode_reward)
+        rollout, state, episode_reward, finished = collect_rollout(env, policy, rollout_steps, state, episode_reward)
         episode_rewards += finished
         block_rewards += finished
 
@@ -160,10 +171,10 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
 
         for epoch in range(num_epochs):
             # The steps in a random order, cut into minibatches of minibatch_size (the last one smaller when
-            # minibatch_size doesn't divide num_steps, and a single one when the rollout is shorter than a minibatch)
-            order = np.random.permutation(num_steps)
+            # minibatch_size doesn't divide the steps, and a single one when the rollout is shorter than a minibatch)
+            order = np.random.permutation(rollout_steps)
 
-            for start in range(0, num_steps, minibatch_size):
+            for start in range(0, rollout_steps, minibatch_size):
                 batch = order[start:start + minibatch_size]
                 # Advantages normalized per minibatch: only their relative size matters, and it keeps the step stable
                 batch_advantages = advantages[batch]
@@ -179,11 +190,11 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
         # 4. Evaluate
         greedy_reward = None
 
-        if eval_env is not None and iteration % eval_freq == 0:
+        if eval_env is not None and (iteration % eval_freq == 0 or (iteration == num_iterations and num_iterations < eval_freq)):
             greedy_reward = evaluate_greedy(eval_env, policy, eval_episodes)
 
             if greedy_reward > best_greedy_reward:
-                best_greedy_reward, best_iteration = greedy_reward, iteration
+                best_greedy_reward, best_iteration, best_steps = greedy_reward, iteration, steps_done
 
                 if checkpoint_filepath:
                     policy.save(checkpoint_filepath)
@@ -199,7 +210,7 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
             write_to_csv(metrics_filepath, {
                 'metrics_key': metrics_key,
                 'iteration': iteration,
-                'steps': iteration * num_steps,
+                'steps': steps_done,
                 'episodes': len(episode_rewards),
                 'mean_episode_reward': mean_reward,
                 'greedy_reward': greedy_reward,
@@ -213,7 +224,7 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
         # Progress: one line every log_every iterations, with the episodes finished in them
         if iteration % log_every == 0 or iteration == num_iterations:
             reward_text = f"{np.mean(block_rewards):.1f} ({len(block_rewards)} episodes)" if block_rewards else "- (no episode ended)"
-            print(f"Iteration {iteration}/{num_iterations} ({iteration * num_steps:,} steps) - episode reward {reward_text} "
+            print(f"Iteration {iteration}/{num_iterations} ({steps_done:,} steps) - episode reward {reward_text} "
                   f"- entropy {metrics['entropy']:.3f} - clip fraction {metrics['clip_fraction']:.3f} - {timing(training_start, iteration, num_iterations)}")
             block_rewards = []
 
@@ -223,7 +234,7 @@ def train_ppo(env, policy, value_model, total_steps, learning_rate=0.0003, num_s
     print(f"\nDone in {format_duration(time.time() - training_start)}.")
 
     if eval_env is not None:
-        when = f"after iteration {best_iteration} ({best_iteration * num_steps:,} steps)" if best_iteration else "before training"
+        when = f"after iteration {best_iteration} ({best_steps:,} steps)" if best_iteration else "before training"
         print(f"Best greedy evaluation: {best_greedy_reward:.1f} ({when})")
 
     if checkpoint_filepath:

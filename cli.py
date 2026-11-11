@@ -21,6 +21,13 @@ def project_path(*parts):
 # The options of the training scripts: --seed, --render (for the environments that can be shown), --watch (for the
 # scripts that use viewer.py) and the length of the training (e.g. episodes=500 adds --episodes, 500 by default).
 # Every script also has --help.
+def positive_int(text):
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
 def training_args(description, render=False, watch=False, **length):
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--seed", type=int, default=None,
@@ -34,7 +41,7 @@ def training_args(description, render=False, watch=False, **length):
                             help="show the newest policy playing in a window while it trains, without slowing the training")
 
     for name, default in length.items():
-        parser.add_argument(f"--{name}", type=int, default=default, help=f"number of {name} (default: {default})")
+        parser.add_argument(f"--{name}", type=positive_int, default=default, help=f"number of {name} (default: {default})")
 
     add_dashboard_option(parser)
     return parser.parse_args()

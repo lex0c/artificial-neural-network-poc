@@ -1,4 +1,6 @@
 import io
+import os
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
@@ -9,6 +11,7 @@ import numpy as np
 from activations import softmax
 from feedforward import FeedForward
 from ppo import collect_rollout, compute_advantages, ppo_output_delta, train_ppo
+from rl import evaluate_greedy
 
 
 def ppo_loss(z, actions, advantages, old_action_probs, clip_range, entropy_coef):
@@ -150,6 +153,18 @@ def minibatch_sizes(num_steps, minibatch_size):
     return [call.args[0].shape[0] for call in delta.call_args_list]
 
 
+# The steps of each rollout, and how many greedy evaluations ran (counting the one before training)
+def rollouts_and_evaluations(total_steps, num_steps, eval_freq):
+    policy, value_model = bandit_models()
+
+    with mock.patch("ppo.collect_rollout", wraps=collect_rollout) as collect, \
+         mock.patch("ppo.evaluate_greedy", wraps=evaluate_greedy) as evaluate, redirect_stdout(io.StringIO()):
+        train_ppo(TwoArmedBandit(), policy, value_model, total_steps=total_steps, num_steps=num_steps, minibatch_size=16,
+                  num_epochs=1, eval_env=TwoArmedBandit(), eval_freq=eval_freq, eval_episodes=1)
+
+    return [call.args[2] for call in collect.call_args_list], evaluate.call_count
+
+
 class TrainPPOTest(unittest.TestCase):
     def test_learns_the_better_action(self):
         policy, value_model = bandit_models()
@@ -165,6 +180,28 @@ class TrainPPOTest(unittest.TestCase):
 
     def test_rollout_shorter_than_a_minibatch_is_a_single_minibatch(self):
         self.assertEqual(minibatch_sizes(32, 64), [32])
+
+    def test_budget_shorter_than_a_rollout_trains_and_evaluates_it(self):
+        # Before, no iteration ran, and the checkpoint kept the untrained policy
+        self.assertEqual(rollouts_and_evaluations(total_steps=32, num_steps=64, eval_freq=5), ([32], 2))
+
+    def test_last_rollout_plays_the_steps_left(self):
+        rollouts, _ = rollouts_and_evaluations(total_steps=100, num_steps=64, eval_freq=5)
+        self.assertEqual(rollouts, [64, 36])
+
+    def test_longer_training_is_evaluated_every_eval_freq_iterations(self):
+        # Before training and after iteration 5, but not at the end (iteration 6)
+        self.assertEqual(rollouts_and_evaluations(total_steps=6 * 64, num_steps=64, eval_freq=5), ([64] * 6, 2))
+
+    def test_rejects_a_budget_without_steps_before_saving_anything(self):
+        policy, value_model = bandit_models()
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = os.path.join(directory, "policy.joblib")
+            with self.assertRaises(ValueError):
+                train_ppo(TwoArmedBandit(), policy, value_model, total_steps=0, eval_env=TwoArmedBandit(),
+                          checkpoint_filepath=checkpoint)
+            self.assertFalse(os.path.exists(checkpoint))
 
 
 if __name__ == "__main__":
