@@ -224,6 +224,8 @@ def categorical_crossentropy_derivative(y_true, y_pred):
 # For a softmax output trained with cross-entropy, the chain rule through the softmax simplifies to
 # (y_pred - y_true) / batch_size in relation to the pre-activation z. Using it directly avoids dividing by
 # tiny probabilities, whose gradient would vanish when the softmax saturates (e.g. with unscaled inputs).
+#
+# The simplification assumes each row of y_true sums to 1 (one-hot or soft labels), as class probabilities do.
 def softmax_crossentropy_delta(fn, y_true, y_pred):
     y_pred = np.array(y_pred, dtype=float)
 

@@ -91,9 +91,10 @@ class FeedForward:
         self.learning_rate = learning_rate
         total_loss = 0
 
+        inputs, targets = self.prepare_dataset(inputs, targets)
+
         # Normalized once for the whole dataset; the backward pass needs the same normalized inputs as the forward pass
         inputs = self.normalize(inputs)
-        targets = np.asarray(targets)
         num_batches = math.ceil(len(inputs) / batch_size)  # the last batch may be smaller
 
         for epoch in range(epochs):
@@ -261,8 +262,38 @@ class FeedForward:
             print(f"Input Normalization: {self.configs['normalization']['method']}")
         print("\n")
 
+    # Brings a dataset to the shapes the training expects: inputs (num_samples, num_inputs) and targets
+    # (num_samples, num_outputs), or class indices for sparse_categorical_crossentropy.
+    #
+    # A flat list of values is accepted for a model with one input (inputs) or one output (targets). Any other
+    # mismatch raises an error, because NumPy broadcasting would otherwise produce a wrong loss without failing.
+    def prepare_dataset(self, inputs, targets):
+        inputs = np.asarray(inputs, dtype=float)
+        targets = np.asarray(targets)
+        num_inputs = self.layers[0]["weights"].shape[1]
+        num_outputs = self.layers[-1]["weights"].shape[0]
+
+        if inputs.ndim == 1 and num_inputs == 1:
+            inputs = inputs.reshape(-1, 1)
+
+        if inputs.ndim != 2 or inputs.shape[1] != num_inputs:
+            raise ValueError(f"inputs must have shape (num_samples, {num_inputs}), got {inputs.shape}")
+
+        if self.configs["loss"] == "sparse_categorical_crossentropy":
+            expected_shapes = [(len(inputs),), (len(inputs), 1)]
+        else:
+            if targets.ndim == 1 and num_outputs == 1:
+                targets = targets.reshape(-1, 1)
+
+            expected_shapes = [(len(inputs), num_outputs)]
+
+        if targets.shape not in expected_shapes:
+            raise ValueError(f"targets must have shape {' or '.join(map(str, expected_shapes))}, got {targets.shape}")
+
+        return inputs, targets
+
     def evaluate(self, test_inputs, test_labels):
-        test_labels = np.asarray(test_labels)
+        test_inputs, test_labels = self.prepare_dataset(test_inputs, test_labels)
         predictions = self.forward(test_inputs)
 
         # Calculate mean loss

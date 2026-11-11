@@ -188,6 +188,55 @@ class FeedForwardTest(unittest.TestCase):
         self.assertAlmostEqual(sparse_accuracy, one_hot_accuracy)
 
 
+class DatasetShapeTest(unittest.TestCase):
+    # Single input and single output: y = 2x - 1
+    def train_linear(self, inputs, targets, use_granular_update):
+        np.random.seed(0)
+        model = FeedForward()
+        model.add_layer(num_inputs=1, num_neurons=1, act_fn="linear")
+        model.configure(loss="mse")
+
+        with redirect_stdout(io.StringIO()):
+            model.train(inputs, targets, epochs=100, learning_rate=0.01, batch_size=8, use_granular_update=use_granular_update)
+
+        return model
+
+    def test_flat_lists_for_one_input_and_one_output(self):
+        x = np.random.default_rng(5).uniform(-5, 5, 40)
+        y = 2 * x - 1
+
+        for use_granular_update in (False, True):
+            with self.subTest(granular=use_granular_update):
+                columns = self.train_linear(x.reshape(-1, 1), y.reshape(-1, 1), use_granular_update)
+                flat = self.train_linear(list(x), list(y), use_granular_update)
+
+                np.testing.assert_allclose(flat.layers[0]["weights"], columns.layers[0]["weights"])
+                np.testing.assert_allclose(flat.layers[0]["biases"], columns.layers[0]["biases"])
+                np.testing.assert_allclose(flat.layers[0]["weights"], [[2.0]], atol=1e-3)
+                np.testing.assert_allclose(flat.layers[0]["biases"], [-1.0], atol=1e-3)
+
+                self.assertAlmostEqual(flat.evaluate(x, y)[0], columns.evaluate(x.reshape(-1, 1), y.reshape(-1, 1))[0])
+                self.assertLess(flat.evaluate(x, y)[0], 1e-6)
+
+    def test_mismatched_shapes_raise_instead_of_broadcasting(self):
+        np.random.seed(0)
+        model = build_model("relu", "linear", "mse")  # 3 inputs, 3 outputs
+
+        # One value per sample for 3 outputs. With 3 samples, (3, 3) - (3,) broadcasts without any NumPy error
+        inputs = np.ones((NUM_OUTPUTS, NUM_INPUTS))
+        flat_targets = np.ones(NUM_OUTPUTS)
+
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(ValueError):
+                model.train(inputs, flat_targets, epochs=1, learning_rate=0.01)
+
+            with self.assertRaises(ValueError):
+                model.train(np.ones((4, 2)), np.ones((4, NUM_OUTPUTS)), epochs=1, learning_rate=0.01)  # 2 features for 3 inputs
+
+        with self.assertRaises(ValueError):
+            model.evaluate(inputs, flat_targets)
+
+
 class SaveAndSeedTest(unittest.TestCase):
     def test_save_keeps_only_the_parameters(self):
         np.random.seed(0)
