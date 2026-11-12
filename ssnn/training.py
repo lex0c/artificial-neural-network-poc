@@ -4,7 +4,7 @@ import numpy as np
 
 from optimizers import make_optimizer
 from progress import format_duration, format_number
-from ssnn.gradients import balance_gradients, clip_global_norm, l2_gradients, task_gradients
+from ssnn.gradients import add_task_gradients, balance_gradients, clip_global_norm, l2_gradients
 from ssnn.model import PARAMETER_NAMES
 
 
@@ -50,10 +50,7 @@ def train(model, train_set, val_set, verbose=False):
 
             for index in batch:
                 _, _, trace = model.step(inputs[index], model.new_state())
-                loss, event_grads = task_gradients(model, trace, labels[index])
-                epoch_loss += loss
-                for name in PARAMETER_NAMES:
-                    grads[name] += event_grads[name]
+                epoch_loss += add_task_gradients(model, trace, labels[index], grads)
                 if trace["router_logits"] is not None:
                     router_logits.append(trace["router_logits"])
                     router_inputs.append(trace["q"])

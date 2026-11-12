@@ -13,10 +13,18 @@ from ssnn.model import PARAMETER_NAMES
 # The cross-entropy of one event, -log p[label], and its gradient with respect to every parameter, as a dict of
 # arrays shaped like model.params. trace comes from model.step.
 def task_gradients(model, trace, label):
+    grads = {name: np.zeros_like(model.params[name]) for name in PARAMETER_NAMES}
+    loss = add_task_gradients(model, trace, label, grads)
+    return loss, grads
+
+
+# The same, added in place to grads (e.g. the sum over a minibatch): only the rows of the selected experts and of the
+# router change, so a training step doesn't create arrays the size of all the experts for every event. Returns the
+# loss.
+def add_task_gradients(model, trace, label, grads):
     params, config = model.params, model.config
     d = config["input_dim"]
     rho, beta, tau = config["rho"], config["beta"], config["routing_temperature"]
-    grads = {name: np.zeros_like(params[name]) for name in PARAMETER_NAMES}
 
     probabilities = trace["probabilities"]
     loss = -np.log(max(float(probabilities[label]), 1e-12))
@@ -24,8 +32,8 @@ def task_gradients(model, trace, label):
     # Decoder: softmax with cross-entropy gives dL/dlogits = p - one_hot(label)
     delta = probabilities.copy()
     delta[label] -= 1
-    grads["W_y"] = np.outer(delta, trace["decoder_input"])
-    grads["b_y"] = delta
+    grads["W_y"] += np.outer(delta, trace["decoder_input"])
+    grads["b_y"] += delta
 
     # Global state and integrator: l depends on g through W_y[:, d:], and g = (1 - beta) g_prev + beta v
     d_g = params["W_y"][:, d:].T @ delta
@@ -38,19 +46,18 @@ def task_gradients(model, trace, label):
     for j, i in enumerate(selected):
         d_h = weights[j] * d_v
         d_u = rho * (1 - trace["n"][j] ** 2) * d_h
-        grads["W_x"][i] = np.outer(d_u, trace["x"])
-        grads["W_h"][i] = np.outer(d_u, trace["h_prev"][j])
-        grads["b"][i] = d_u
+        grads["W_x"][i] += np.outer(d_u, trace["x"])
+        grads["W_h"][i] += np.outer(d_u, trace["h_prev"][j])
+        grads["b"][i] += d_u
 
     # Router: a = softmax(z[S] / tau), so dL/dz_j = (a_j / tau) (dL/da_j - sum of a dL/da) for the selected experts,
     # and 0 for the others (the top-k choice itself isn't differentiable). With k = 1, a = [1] and the gradient is 0.
     if config["router"] == "learned":
-        d_z = np.zeros(config["num_experts"], model.dtype)
-        d_z[selected] = (weights / tau) * (d_weights - weights @ d_weights)
-        grads["W_r"] = np.outer(d_z, trace["q"])
-        grads["b_r"] = d_z
+        d_z = (weights / tau) * (d_weights - weights @ d_weights)
+        grads["W_r"][selected] += np.outer(d_z, trace["q"])
+        grads["b_r"][selected] += d_z
 
-    return loss, grads
+    return loss
 
 
 # Balance loss of a minibatch: L_bal = E * sum over the experts of (mean_pi_i - 1 / E)^2, where pi is the

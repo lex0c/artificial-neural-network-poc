@@ -1,8 +1,5 @@
 import argparse
-import csv
 import os
-import platform
-import subprocess
 import time
 from datetime import datetime
 
@@ -13,6 +10,7 @@ from cli import positive_int
 from ssnn.config import make_config
 from ssnn.inference import AllExpertsEngine, DenseRNN, SelectiveEngine, rnn_hidden_for
 from ssnn.model import SSNN, parameter_counts
+from ssnn.reporting import REPORTS, append_row, environment
 
 
 # Latency of inference, one event at a time (batch = 1), with random weights: it measures the cost of the
@@ -28,36 +26,18 @@ from ssnn.model import SSNN, parameter_counts
 #
 #   python -m ssnn.scripts.bench_cpu
 
-REPORT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reports", "benchmark.csv")
 
 parser = argparse.ArgumentParser(description="Latency of the SSNN on a CPU, against running all experts and dense RNNs.")
 parser.add_argument("--events", type=positive_int, default=2000, help="timed events per repetition (default: 2000)")
 parser.add_argument("--warmup", type=positive_int, default=500, help="events before timing (default: 500)")
 parser.add_argument("--repetitions", type=positive_int, default=3, help="repetitions of the timed events (default: 3)")
-parser.add_argument("--report", default=REPORT, help="CSV file the results are added to")
+parser.add_argument("--report", default=os.path.join(REPORTS, "benchmark.csv"), help="CSV file the results are added to")
 args = parser.parse_args()
 
 INPUT_DIM, NUM_CLASSES = 32, 2
 CONFIGURATIONS = sorted({(E, 2, 256) for E in (16, 32, 64, 128)}      # more experts, the same work per event
                         | {(128, k, 256) for k in (1, 2, 4, 8)}       # more selected experts
                         | {(128, 2, H) for H in (32, 64, 128, 256)})  # larger states
-
-
-def git_commit():
-    try:
-        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        changes = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True).stdout
-        return commit + ("-dirty" if changes.strip() else "")
-    except (OSError, subprocess.CalledProcessError):
-        return ""
-
-
-def cpu_name():
-    try:
-        with open("/proc/cpuinfo") as file:
-            return next(line.split(":", 1)[1].strip() for line in file if line.startswith("model name"))
-    except (OSError, StopIteration):
-        return platform.processor()
 
 
 def resident_memory_mb():
@@ -100,17 +80,8 @@ def engines(E, k, H):
                    ("rnn, same work", same_work, same_work.new_state()), ("rnn, same total", same_total, same_total.new_state())]
 
 
-def report(row):
-    new_file = not os.path.exists(args.report)
-    os.makedirs(os.path.dirname(args.report), exist_ok=True)
-    with open(args.report, "a", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=list(row))
-        if new_file:
-            writer.writeheader()
-        writer.writerow(row)
-
-
-environment = {"commit": git_commit(), "cpu": cpu_name(), "numpy": np.__version__, "python": platform.python_version()}
+env = environment()
+environment = {key: env[key] for key in ("commit", "cpu", "numpy", "python")}  # the columns of reports/benchmark.csv
 inputs = np.random.default_rng(0).normal(0, 1, (args.warmup + args.events, INPUT_DIM)).astype(np.float32)
 print(f"{environment['cpu']}, NumPy {environment['numpy']}; {args.events} events x {args.repetitions} after {args.warmup} of warm-up")
 
@@ -129,7 +100,7 @@ for threads in (1, None):
                 latencies = measure(engine, state, inputs)
                 p50[name] = np.percentile(latencies, 50)
                 cells.append(f"{p50[name]:8.1f} ({np.percentile(latencies, 95):6.1f})")
-                report({"date": datetime.now().isoformat(timespec="seconds"), "num_experts": E, "top_k": k, "state_dim": H,
+                append_row(args.report, {"date": datetime.now().isoformat(timespec="seconds"), "num_experts": E, "top_k": k, "state_dim": H,
                         "input_dim": INPUT_DIM, "engine": name, "touched_per_event": engine.touched,
                         "touched_bytes": engine.touched * 4, "p50_us": p50[name], "p95_us": np.percentile(latencies, 95),
                         "mean_us": latencies.mean(), "std_us": latencies.std(), "events_per_second": 1e6 / latencies.mean(),
