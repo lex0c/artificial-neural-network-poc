@@ -70,29 +70,43 @@ def experiment_capacity(seed, num_regimes, per_regime=(400, 100, 100)):
 
 
 # Experiment B: memory. A set of hidden registers, each holding one of `values` values (2 by default: one bit). A
-# sequence first writes every register, then the
-# register it will ask for once more, then has a gap of NOOP events, with a rewrite of another register now and then,
-# and ends with a QUERY of that register, whose answer is the last value written to it. The NOOPs carry noise features
-# that don't matter, which a dense recurrent network still has to keep out of its state. The distance is the number of
-# events from the last write of the queried register to the QUERY.
+# sequence first writes every register, then the register it will ask for once more, then has a gap of NOOP events,
+# with a rewrite of another register now and then, and ends with a QUERY of that register, whose answer is the last
+# value written to it. The NOOPs carry noise features that don't matter, which a dense recurrent network still has to
+# keep out of its state. The distance is the number of events from the last write of the queried register to the
+# QUERY. The answer is one of the values: a class. With 1 register of one bit and no noise, it is a single bit to
+# remember.
 #
-# The inputs: one-hot over the commands, SET(i, v) for each register and value, QUERY(i) and NOOP, followed by the
-# noise features (non-zero only on the NOOPs). The answer is one of the values: a class. With 1 register of one bit and
-# no noise, it is a single bit to remember.
+# The inputs, with encoding:
+#   "one-hot"   one-hot over the commands, then the noise features (non-zero only on the NOOPs): [SET(0, 0),
+#               SET(0, 1), ..., QUERY(0), ..., NOOP, noise]. Each write of a register and a value, and each QUERY of a
+#               register, is a feature of its own, so nothing is common to the writes and the QUERY of a register.
+#   "keyed"     the register is a feature of its own, shared by its writes and its QUERY like the key of a memory, and
+#               the value and the operation are others: [register, value, SET, QUERY, NOOP, noise]
 class MemoryTask:
-    def __init__(self, registers=8, noise=8, rewrite_rate=0.1, values=2):
+    def __init__(self, registers=8, noise=8, rewrite_rate=0.1, values=2, encoding="one-hot"):
+        if encoding not in ("one-hot", "keyed"):
+            raise ValueError("encoding must be one-hot or keyed")
         self.registers, self.noise, self.rewrite_rate, self.values = registers, noise, rewrite_rate, values
-        self.input_dim = (values + 1) * registers + 1 + noise
-        self.noop_index = (values + 1) * registers
+        self.encoding = encoding
+        commands = registers + values + 2 if encoding == "keyed" else (values + 1) * registers
+        self.input_dim = commands + 1 + noise
+        self.noop_index = commands
 
     def set_event(self, register, value):
         x = np.zeros(self.input_dim, np.float32)
-        x[self.values * register + value] = 1
+        if self.encoding == "keyed":
+            x[[register, self.registers + value, self.registers + self.values]] = 1
+        else:
+            x[self.values * register + value] = 1
         return x
 
     def query_event(self, register):
         x = np.zeros(self.input_dim, np.float32)
-        x[self.values * self.registers + register] = 1
+        if self.encoding == "keyed":
+            x[[register, self.registers + self.values + 1]] = 1
+        else:
+            x[self.values * self.registers + register] = 1
         return x
 
     def noop_event(self, rng):
@@ -124,8 +138,11 @@ class MemoryTask:
         return [self.sequence(rng, int(distance)) for distance in rng.integers(distances[0], distances[1] + 1, num_sequences)]
 
     # The routing an oracle would choose, for a fixed router with k = 1: expert i for the writes and the QUERY of
-    # register i, and one more expert for the NOOPs (whatever their largest feature)
+    # register i, and one more expert for the NOOPs (whatever their largest feature). The fixed router follows the
+    # first largest input, which with the keyed encoding is the register of a write or a QUERY.
     def oracle_routes(self):
+        if self.encoding == "keyed":
+            return [[i] for i in range(self.registers)] + [[self.registers]] * (self.input_dim - self.registers)
         return ([[i // self.values] for i in range(self.values * self.registers)] + [[i] for i in range(self.registers)]
                 + [[self.registers]] * (1 + self.noise))
 

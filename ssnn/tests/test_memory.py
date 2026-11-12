@@ -55,6 +55,32 @@ class MemoryTaskTest(unittest.TestCase):
             for value in range(4):
                 self.assertEqual(routes[int(task.set_event(register, value).argmax())], [register])
 
+    def test_keyed_registers(self):
+        # [register (3), value (4), SET, QUERY, NOOP, noise (2)]
+        task = MemoryTask(registers=3, noise=2, rewrite_rate=0.3, values=4, encoding="keyed")
+        rng = np.random.default_rng(5)
+        self.assertEqual((task.input_dim, task.noop_index), (3 + 4 + 3 + 2, 9))
+        np.testing.assert_array_equal(task.set_event(2, 1)[:9], [0, 0, 1, 0, 1, 0, 0, 1, 0])
+        np.testing.assert_array_equal(task.query_event(1)[:9], [0, 1, 0, 0, 0, 0, 0, 0, 1])
+
+        for _ in range(100):
+            inputs, label, distance = task.sequence(rng, int(rng.integers(1, 20)))
+            register = int(inputs[-1, :3].argmax())
+            self.assertEqual(inputs[-1, 8], 1)  # a QUERY
+            writes = [t for t in range(len(inputs)) if inputs[t, register] == 1 and inputs[t, 7] == 1]
+            self.assertEqual(label, int(inputs[writes[-1], 3:7].argmax()))
+            self.assertEqual(len(inputs) - 1 - writes[-1], distance)
+
+        routes = task.oracle_routes()
+        self.assertEqual(len(routes), task.input_dim)
+        for register in range(3):
+            for event in [task.set_event(register, value) for value in range(4)] + [task.query_event(register)]:
+                self.assertEqual(routes[int(event.argmax())], [register])
+        self.assertEqual(routes[int(task.noop_event(rng).argmax())], [3])
+
+        with self.assertRaises(ValueError):
+            MemoryTask(encoding="binary")
+
     def test_noise_only_on_the_noops(self):
         task = MemoryTask(registers=2, noise=4)
         inputs, _, _ = task.sequence(np.random.default_rng(1), 20)
