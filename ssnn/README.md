@@ -261,6 +261,44 @@ router, the gated write and the GRUs, seeds 7, 19 and 43:
   around epoch 10. Trained on gaps up to 30 it had reached 98% at every distance, so this says nothing about its
   capacity, only that its learning rate wasn't tuned for long sequences. The GRU of the same work trained steadily.
 
+### Fair learning rates, longer tests and a harder task
+
+To see whether that holds, the same comparison with each model trained at learning rates 0.001 and 0.003 and keeping,
+on each seed, the one with the lowest validation loss; tested on distances up to 500; and on a harder task, 16
+registers holding one of 4 values each (a guess is right 25% of the time), with 32 experts for the learned SSNN. Seeds
+7, 19 and 43, mean test accuracy (worst seed):
+
+8 registers of 2 values:
+
+| Model | Numbers touched per event | 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | 201 to 500 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SSNN, gated write | 5,412 | 98.6% | 98.8% | 98.1% | 97.1% | 93.7% (91.0) |
+| GRU (28), same work | 5,332 | 93.6% | 92.6% | 95.4% | 92.9% | 92.8% (91.3) |
+| GRU (64) | 19,012 | 83.8% | 85.9% | 89.1% | 85.8% | 85.1% |
+
+16 registers of 4 values:
+
+| Model | Numbers touched per event | 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | 201 to 500 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SSNN, oracle | 4,392 | 100% | 100% | 100% | 100% | 100% |
+| SSNN, gated write | 12,200 | 71.6% | 71.3% | 68.9% | 59.8% | 54.9% |
+| GRU (32), same work | 12,200 | 25.7% | 23.2% | 23.6% | 25.2% | 22.9% |
+| GRU (64) | 30,184 | 25.4% | 26.1% | 24.7% | 25.4% | 25.1% |
+
+- **The learning rate didn't change the comparison**: the gated SSNN and the GRU of the same work kept 0.003 on every
+  seed. With 8 registers the SSNN stays ahead up to 200 events, and ties with the GRU from 201 to 500 (93.7% against
+  92.8%, the worst seeds 91.0% and 91.3%): over gaps 5 times longer than any in its training, its memory starts to
+  fade too.
+- **The GRU with 64 neurons stays unstable on these long sequences** at both learning rates, below the GRU of the same
+  work; trained on gaps up to 30 it had reached 98%.
+- **On the harder task, neither GRU got off the ground**: their validation loss stayed at ln 4 = 1.386, a constant
+  answer, through the 20 epochs. They might learn it with a longer training or a curriculum, which wasn't tried. The
+  SSNN learned part of it, about 70% on the trained distances, and the oracle all of it, at every distance: here too
+  the gap is the learned routing, not the architecture.
+
+These rows were run on the working tree of commit 48c4158 before it was committed (the code didn't change in between),
+so `reports/memory.csv` gives that commit for them.
+
 - With a single register and no noise, every model answers right at every distance, including the dense RNN, and even
   the learned SSNN, whose NOOPs go through the memory expert most of the time: holding one bit against an input that
   never changes is easy for any recurrent network. The noise and the number of registers are what make the task
@@ -273,7 +311,7 @@ router, the gated write and the GRUs, seeds 7, 19 and 43:
 | Running k of E experts reduces the computation per event | supported: the cost per event barely depends on E, 30 times less than running all 128 experts |
 | That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event in Python |
 | The stored capacity buys quality | not supported in experiment D, where the SSNN stays below dense networks of the same work; the task turned out to be limited by data, so a larger version is still open |
-| Persistent states help on tasks that need memory | supported: with the right routing, perfect memory at every distance with the least work; with a learned router, the gated write and long gaps in the training, above a GRU of the same work at every distance, up to 200 events |
+| Persistent states help on tasks that need memory | supported: with the right routing, perfect memory at every distance (up to 500 events) with the least work; with a learned router, the gated write and long gaps in the training, above a GRU of the same work up to 200 events and level with it beyond, and the only learned model that got off the ground on 16 registers of 4 values |
 | A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it learns to protect its memory with the gated write, by writing little to it rather than avoiding it |
 
 ## Conclusion so far
@@ -287,18 +325,20 @@ specialization even cost accuracy in experiment D, as each expert learns from on
 
 Experiment B (memory) is where the architecture shows what it is for: experts that don't run keep their state exactly,
 which gives a memory that neither fades nor gets disturbed, at a low cost per event. With the right routing it
-remembers perfectly. With a learned router, it first leaked over long gaps; with the gated write (each expert writes
-in proportion to its router weight) and long gaps in the training, the router learned to protect its memory, and the
-SSNN beat a GRU of the same work at every distance, up to 200 events.
+remembers perfectly, at every distance and on every task tried. With a learned router, the gated write and long gaps
+in the training, it beat a GRU of the same work on 8 registers up to 200 events, and was the only learned model to
+make progress on 16 registers of 4 values. But the learned routing stays far from the oracle on the harder task, and
+its memory fades over gaps much longer than those it trained on.
 
 What stays open, in the order it would be worth testing:
 
-1. **Other memory tasks**, to see whether this holds beyond one task: more registers, values of more than one bit,
-   gaps longer than 200, and GRUs whose learning rate is tuned for long sequences.
-2. **Capacity at a larger scale**: many more examples per regime and harder rules.
-3. **Speed** (compiled code, routing with locality, grouping the events of many sessions by expert): it matters only
-   where the SSNN is better, which now means memory. In Python, an SSNN event still takes 2 to 4 times as long as a
-   dense network doing the same work.
+1. **A better learned routing**, the gap between the oracle and the learned SSNN: gradients for the top-k choice itself
+   (straight-through estimates or REINFORCE), longer trainings, a curriculum of growing gaps.
+2. **Fairer dense baselines on the hardest task**: GRUs or LSTMs with a longer training or a curriculum, to tell
+   whether they can't learn it or just learn it more slowly.
+3. **Capacity at a larger scale**, and **speed** (compiled code, routing with locality, grouping the events of many
+   sessions by expert), which matters only where the SSNN is better: in Python, an SSNN event still takes 2 to 4
+   times as long as a dense network doing the same work.
 
 These are results of a first version: one laptop CPU, Python and NumPy, small tasks, hyperparameters not tuned, 3
 seeds.
