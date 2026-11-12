@@ -31,12 +31,13 @@ From the root of the repository:
 python -m unittest discover -s ssnn/tests -t .      # the tests of the SSNN (python -m unittest runs them too)
 python -m ssnn.scripts.train_static --seeds 7 19 43 # experiment A: about 6 minutes per seed
 python -m ssnn.scripts.bench_cpu                    # the latency benchmark: about 6 minutes
+python -m ssnn.scripts.train_capacity --seeds 7     # experiment D: about 15 minutes per seed
 ```
 
 `train_static` adds one row per model and seed to `reports/experiments.csv`, with the configuration hash, the commit,
 the versions and `OPENBLAS_NUM_THREADS`, so every result can be traced to the code and the setup that gave it. The
 results below came from `OPENBLAS_NUM_THREADS=1`. `bench_cpu` does the same in `reports/benchmark.csv`, with the CPU
-and the BLAS library and threads of each row.
+and the BLAS library and threads of each row, and `train_capacity` in `reports/capacity.csv`.
 
 ## Organization
 
@@ -45,13 +46,16 @@ and the BLAS library and threads of each row.
 | `config.py` | The default configuration, its checks and a hash to record with each result |
 | `model.py` | Router with top-k, experts, integrator, decoder and the state of a session |
 | `gradients.py` | The gradients of one event, the balance loss of the router, L2 and gradient clipping |
-| `tasks.py` | The data of experiment A |
+| `tasks.py` | The data of experiments A and D |
 | `training.py` | Training on independent examples, keeping the epoch with the lowest validation loss |
 | `metrics.py` | Accuracy, accuracy by regime and how the router uses the experts |
 | `baselines.py` | Dense MLPs sized like the SSNN |
+| `experiments.py` | Training and testing one model on a task, the same way for every model |
+| `reporting.py` | The commit, the machine and the CSV rows recorded with every result |
 | `inference.py` | Lean engines for inference, one event at a time: the selective SSNN, all its experts, and a dense RNN |
 | `scripts/train_static.py` | Experiment A, with its baselines and ablations |
 | `scripts/bench_cpu.py` | The latency benchmark of the engines |
+| `scripts/train_capacity.py` | Experiment D: many regimes, each with its own rule |
 
 It shares `activations.py` (stable softmax), `optimizers.py` (Adam), `progress.py` and `gradcheck.py` with the rest of
 the repository. Those modules keep float32 values in float32 and don't limit the BLAS threads; only `baselines.py`
@@ -151,30 +155,64 @@ What it shows:
   30 µs. The first cause belongs to a Python implementation; the second to the architecture, unless the routing
   reuses the same experts.
 
+## Experiment D: many regimes, each with its own rule
+
+The test of the one reason for the architecture: holding more capacity than a dense network of the same cost per
+event can use. R regimes, each with a rule of its own given by a small random teacher network (8 tanh neurons over
+the same 8 features), the regime as a one-hot vector, 400 examples per regime to train and 100 to test. The SSNN has
+64 experts of 32 neurons, 2,048 in total, and runs 2 per event; a dense MLP with the 64 hidden neurons of 2 experts
+has to share them between all the rules. Mean test accuracy over seeds 7, 19 and 43:
+
+| Regimes | SSNN | SSNN, random router | MLP, same work (64 hidden) | MLP, same parameters per event | MLP, same total parameters |
+| --- | --- | --- | --- | --- | --- |
+| 4 | 86.7% | 69.8% | 91.7% | 93.5% | 93.3% |
+| 16 | 87.6% | 57.5% | 92.5% | 93.8% | 93.2% |
+| 64 | 84.6% | 54.3% | 92.2% | 93.0% | 92.6% |
+
+What it shows:
+
+- **The task didn't create the condition it was designed for.** The MLP with 64 hidden neurons didn't run out of
+  capacity: with 64 regimes it is 0.4 points below the MLP with 2,960. And every dense network, however large, stays
+  around 93%: the limit was the data, 400 examples per regime, not the capacity.
+- **The SSNN is 5 to 8 points below every dense network**, for every number of regimes, and furthest with 64. The
+  likely cause: each expert learns only from the examples the router sends it, while a dense network shares what the
+  rules have in common. This cost of a mixture of experts dominates here.
+- **The router learns**: about 30 points above the random router, with 0.9 to 1.7 bits of regime information
+  against about 0.2 for the random router. With few events per pair of regime and expert, the estimate of that
+  information is biased upwards, and the random router shows by how much.
+
+A fair test of the capacity question would need many more examples per regime and harder teachers, until the MLP
+with 64 hidden neurons reaches its limit while the larger ones keep improving: about 128,000 examples and 45 minutes
+per seed with this training in Python. It hasn't been run.
+
 ## Status of the hypotheses
 
 | Hypothesis | Status |
 | --- | --- |
 | Running k of E experts reduces the computation per event | supported: the cost per event barely depends on E, 30 times less than running all 128 experts |
-| That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event, and less accurate than dense networks of the same work in experiment A |
+| That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event, and less accurate than dense networks of the same work in experiments A and D |
+| The stored capacity buys quality | not supported in experiment D, where the SSNN stays below dense networks of the same work; the task turned out to be limited by data, so a larger version is still open |
 | Persistent states help on tasks that need memory | not tested yet: needs a memory task and backpropagation through time |
-| A learned routing specializes the experts | supported in experiment A (better than random routing, 1.1 bits of regime information), with partial specialization |
+| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization |
 
 ## Conclusion so far
 
 The mechanism works: the gradients are right, the selective execution matches the dense one, the router learns and
-specializes the experts, and the stored capacity comes almost for free in latency. But against a dense network
-doing the same work per event, the SSNN loses on both fronts, speed and accuracy, even to an MLP of 706 parameters.
+specializes the experts, and the stored capacity comes almost for free in latency.
 
-The one reason for the architecture is to hold much more capacity than a dense network of the same cost per event can
-use. In experiment A that capacity bought nothing, because the task is too simple. So the question that decides is
-still open: is there a task where the extra capacity buys quality? Next, in this order:
+But in this version the SSNN doesn't pay off against a dense network doing the same work per event. It loses in
+every experiment, on accuracy (A and D) and on latency. Its one consistent advantage, running far cheaper than a dense
+network of the same capacity, matters only if that capacity buys quality, and no task here showed it. In experiment D
+the specialization even cost accuracy, as each expert learns from only part of the data.
 
-1. **A task that needs capacity**: dozens of regimes, each with its own rule, so that a dense network of the same cost
-   per event can't learn them all and the SSNN can give each regime experts of its own. If the SSNN doesn't win
-   there either, the efficiency hypothesis can be closed.
-2. **A memory task**, to test the persistent states, which experiment A doesn't use.
-3. **Only then, speed** (compiled code, routing with locality): being faster matters only where the SSNN is better.
+The efficiency hypothesis is therefore not supported in this version. What stays open, in the order it would be worth
+testing:
+
+1. **Capacity at a larger scale**: many more examples per regime and harder rules, until a dense network of the same
+   work reaches its limit. If the SSNN doesn't win there, the efficiency hypothesis can be closed.
+2. **Memory**: the persistent states, which no experiment here uses.
+3. **Speed** (compiled code, routing with locality, grouping the events of many sessions by expert): it matters only
+   where the SSNN is better.
 
 These are results of a first version: one laptop CPU, Python and NumPy, small tasks, hyperparameters not tuned, 3
 seeds.
