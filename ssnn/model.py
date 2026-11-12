@@ -105,9 +105,11 @@ class SSNN:
         decoder_input = np.concatenate([x, g])
         probabilities = softmax(p["W_y"] @ decoder_input + p["b_y"])
 
+        # h_all: the states of all the experts before the event, for the dense router gradient (the given state's
+        # array, which this step doesn't change)
         trace = {
             "x": x, "q": q, "router_logits": logits, "selected": selected, "weights": weights,
-            "h_prev": h_prev, "n": n, "h_selected": h[selected], "decoder_input": decoder_input,
+            "h_prev": h_prev, "n": n, "h_selected": h[selected], "h_all": state.h, "decoder_input": decoder_input,
             "probabilities": probabilities,
         }
         return probabilities, State(h, g), trace

@@ -15,22 +15,26 @@ from ssnn.tasks import MemoryTask, experiment_memory
 from ssnn.training import evaluate_sequences, train_sequences
 
 
-# Experiment B: memory. Registers of one bit, a long gap of noisy NOOPs with rewrites of other registers, and a QUERY
-# of one register at the end (ssnn/tasks.py). Trained with distances up to 30, tested up to 200. For each seed:
+# Experiment B: memory. Registers of one of 2 values (or --values), a long gap of noisy NOOPs with rewrites of other
+# registers, and a QUERY of one register at the end (ssnn/tasks.py). Trained with distances up to 30 (or
+# --max-distance), tested up to 500. For each seed:
 #   ssnn, oracle        one expert per register and one for the NOOPs, chosen by hand: what the architecture can do
 #                       when the routing is right
-#   ssnn, learned       16 experts, 2 per event, the router learns which
+#   ssnn, learned       16 experts (or --experts), 2 per event, the router learns which
 #   ssnn, gated         the same, each expert writing in proportion to its weight (write "gated"), so the router can
 #                       learn to protect a memory, with and without the balance loss
+#   ssnn, dense         the gated one, with a router that also learns which experts to choose (router_gradient
+#                       "dense", ssnn/gradients.py)
 #   rnn                 a dense tanh RNN with 32 neurons, as much work per event as one expert
 #   gru                 gated recurrent units, 32 neurons, the same with as much work per event as the learned SSNN,
 #                       and 64 neurons
-# Every model trains on the same sequences with the same epochs, minibatches and learning rate, and keeps its epoch
-# with the lowest validation loss. One row per model and seed goes to ssnn/reports/memory.csv.
+# Every model trains on the same sequences with the same epochs, minibatches and learning rate (each of
+# --learning-rates, from the start), and keeps its epoch with the lowest validation loss. One row per model, learning
+# rate and seed goes to ssnn/reports/memory.csv.
 #
 #   python -m ssnn.scripts.train_memory --seeds 7 19 43
 
-MODEL_KEYS = ("oracle", "learned", "gated", "gated-unbalanced", "rnn", "gru", "gru-same-work", "gru-64")
+MODEL_KEYS = ("oracle", "learned", "gated", "gated-unbalanced", "dense", "rnn", "gru", "gru-same-work", "gru-64")
 
 parser = argparse.ArgumentParser(description="Experiment B of the SSNN: remembering registers across long, noisy gaps.")
 parser.add_argument("--registers", type=positive_int, default=8, help="registers (default: 8)")
@@ -64,10 +68,12 @@ def models(seed):
     learned = ssnn(seed, num_experts=args.experts, top_k=2)
     gated = ssnn(seed, num_experts=args.experts, top_k=2, write="gated")
     gated_unbalanced = ssnn(seed, num_experts=args.experts, top_k=2, write="gated", balance_weight=0.0)
+    dense = ssnn(seed, num_experts=args.experts, top_k=2, write="gated", router_gradient="dense")
     same_work = gru_hidden_for(learned[0].touched, task.input_dim, NUM_CLASSES)
     all_models = {
         "oracle": ("ssnn, oracle routing", *oracle), "learned": ("ssnn, learned router", *learned),
         "gated": ("ssnn, gated write", *gated), "gated-unbalanced": ("ssnn, gated, no balance", *gated_unbalanced),
+        "dense": ("ssnn, gated, dense router gradient", *dense),
         "rnn": ("rnn (32)", TanhRNN(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
         "gru": ("gru (32)", GRU(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
         "gru-same-work": (f"gru ({same_work}), same work", GRU(task.input_dim, same_work, NUM_CLASSES, seed=seed), None),

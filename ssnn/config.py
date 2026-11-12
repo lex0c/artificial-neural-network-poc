@@ -21,6 +21,9 @@ DEFAULT_CONFIG = {
                                   # or "fixed": the experts of fixed_routes, chosen by hand (an oracle)
     "fixed_routes": None,         # with router "fixed": for each input feature, the k experts of an event whose
                                   # largest input is that feature (e.g. the one-hot command of a sequence)
+    "router_gradient": "selected",  # or "dense": the router also learns which experts to choose, from an estimate
+                                  # for each expert left out of what adding it to the selection would do to the loss
+                                  # (gradients.add_dense_router_gradients; learned router and gated write only)
     "batch_size": 32,
     "epochs": 30,
     "learning_rate": 1e-3,
@@ -49,6 +52,9 @@ def validate(config):
         (config["routing_temperature"] > 0, "routing_temperature must be positive"),
         (config["router"] in ("learned", "random", "fixed"), "router must be learned, random or fixed"),
         (config["write"] in ("fixed", "gated"), "write must be fixed or gated"),
+        (config["router_gradient"] in ("selected", "dense"), "router_gradient must be selected or dense"),
+        (config["router_gradient"] != "dense" or (config["router"] == "learned" and config["write"] == "gated"),
+         "the dense router gradient needs a learned router and the gated write"),
         (config["router"] != "fixed" or valid_routes(config), "fixed_routes needs, for each input, k different experts"),
         (min(config["input_dim"], config["state_dim"], config["num_classes"]) >= 1, "the dimensions must be at least 1"),
     ]

@@ -135,6 +135,10 @@ class ForwardTest(unittest.TestCase):
             make_config(top_k=17)
         with self.assertRaises(ValueError):
             make_config(learning_rat=0.1)  # a typo
+        with self.assertRaises(ValueError):
+            make_config(router_gradient="dense")  # needs the gated write
+        with self.assertRaises(ValueError):
+            make_config(router_gradient="dense", write="gated", router="random")
         self.assertEqual(config_hash(make_config()), config_hash(dict(DEFAULT_CONFIG)))
         self.assertNotEqual(config_hash(make_config(top_k=3)), config_hash(DEFAULT_CONFIG))
 

@@ -59,6 +59,8 @@ def add_task_gradients(model, trace, label, grads):
         d_z = (weights / tau) * (d_weights - weights @ d_weights)
         grads["W_r"][selected] += np.outer(d_z, trace["q"])
         grads["b_r"][selected] += d_z
+        if config["router_gradient"] == "dense":
+            add_dense_router_gradients(model, trace, d_v, None, d_weights, grads)
 
     return loss
 
@@ -113,10 +115,48 @@ def sequence_gradients(model, traces, label):
             grads["W_r"][selected] += np.outer(d_z, trace["q"])
             grads["b_r"][selected] += d_z
             dg_prev += (params["W_r"][selected].T @ d_z)[d:]
+            if config["router_gradient"] == "dense":
+                add_dense_router_gradients(model, trace, d_v, dh, d_weights, grads)  # dh: from the following events
 
         dg = dg_prev
 
     return loss, grads
+
+
+# The router gradient of the experts left out of an event, with router_gradient "dense". The top-k choice isn't
+# differentiable: the gradient above only shares the weight among the selected experts, and nothing tells the router
+# that another expert would have done better. For each expert e left out, this estimates it to first order: added to
+# the selection with a small weight a_e, the weights of the selected experts scaled by 1 - a_e so they still sum to 1,
+# e would change the loss by about a_e c_e, with
+#   c_e = dL/da_e - sum over S of a_j dL/da_j
+#   dL/da_e = d_v . h_e + rho dL/dh_e . (n_e - h_e)   (through the read, and through the gated write)
+# where h_e is its state before the event, n_e = tanh(W_x[e] x + W_h[e] h_e + b[e]) the value it would write, and
+# dL/dh_e the gradient of its state from the following events (dh, None for an independent example). With the weight
+# softmax(z / tau) over S and e would give it, a_e = exp(z_e / tau) / (exp(z_e / tau) + sum over S of exp(z_j / tau)),
+# its logit gets dL/dz_e = a_e (1 - a_e) c_e / tau: up if adding e would lower the loss, down otherwise. The estimate
+# reaches W_r and b_r only, not the global state the router read, so the gradients of every other parameter stay
+# exact. It costs computing the candidate n of every expert, once per event of the training.
+#
+# d_v: dL/dv of the event; d_weights: dL/da of the selected experts, complete.
+def add_dense_router_gradients(model, trace, d_v, dh, d_weights, grads):
+    params, config = model.params, model.config
+    tau, rho = config["routing_temperature"], config["rho"]
+    selected, weights, z = trace["selected"], trace["weights"], trace["router_logits"] / tau
+
+    left_out = np.ones(len(z), bool)
+    left_out[selected] = False
+    h = trace["h_all"][left_out]
+    d_a = h @ d_v
+    if dh is not None:
+        n = np.tanh(params["W_x"] @ trace["x"] + np.matmul(params["W_h"], trace["h_all"][:, :, None])[:, :, 0]
+                    + params["b"])[left_out]
+        d_a += rho * np.sum(dh[left_out] * (n - h), axis=1)
+
+    c = d_a - weights @ d_weights
+    a = np.exp(z[left_out] - np.logaddexp(z[left_out], np.logaddexp.reduce(z[selected])))
+    d_z = a * (1 - a) * c / tau
+    grads["W_r"][left_out] += np.outer(d_z, trace["q"])
+    grads["b_r"][left_out] += d_z
 
 
 # Balance loss of a minibatch: L_bal = E * sum over the experts of (mean_pi_i - 1 / E)^2, where pi is the

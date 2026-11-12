@@ -2,9 +2,11 @@ import unittest
 
 import numpy as np
 
+from activations import softmax
 from gradcheck import numerical_gradients
 from ssnn.config import make_config
-from ssnn.model import SSNN
+from ssnn.gradients import task_gradients
+from ssnn.model import SSNN, State
 from ssnn.recurrent import GRU, SequenceSSNN, TanhRNN, gru_hidden_for
 from ssnn.metrics import memory_leak
 from ssnn.tasks import MemoryTask, experiment_memory
@@ -141,6 +143,94 @@ class SequenceGradientTest(unittest.TestCase):
 
     def test_gru(self):
         self.check(GRU(input_dim=4, hidden_dim=5, num_classes=2, seed=1, dtype="float64"), label=1)
+
+
+# The loss of a sequence if expert were added to the selection of event step with the given weight, the weights of the
+# selected experts scaled by 1 - weight: a forward pass of its own (gated write), from the given state or the zero one
+def loss_with_an_added_expert(ssnn, inputs, label, step, expert, weight, state=None):
+    p, rho, beta = ssnn.params, ssnn.config["rho"], ssnn.config["beta"]
+    state = state or ssnn.new_state()
+
+    for t, x in enumerate(inputs):
+        _, selected, weights = ssnn.route(np.concatenate([x, state.g]))
+        if t == step:
+            selected, weights = np.append(selected, expert), np.append(weights * (1 - weight), weight)
+        h = state.h.copy()
+        for i, a in zip(selected, weights):
+            n = np.tanh(p["W_x"][i] @ x + p["W_h"][i] @ state.h[i] + p["b"][i])
+            h[i] = (1 - rho * a) * state.h[i] + rho * a * n
+        state = State(h, (1 - beta) * state.g + beta * (weights @ h[selected]))
+
+    return -np.log(softmax(p["W_y"] @ np.concatenate([x, state.g]) + p["b_y"])[label])
+
+
+class DenseRouterGradientTest(unittest.TestCase):
+    TAU = 0.7
+
+    def models(self):
+        # The same parameters, with the router gradient of the selected experts only and with the dense one
+        return [SSNN(make_config(dtype="float64", input_dim=4, state_dim=5, num_classes=2, num_experts=5, top_k=2,
+                                 write="gated", routing_temperature=self.TAU, router_gradient=mode), seed=3)
+                for mode in ("selected", "dense")]
+
+    # What the dense gradient adds to b_r and W_r: for each event and each expert left out, a_e (1 - a_e) c_e / tau,
+    # with c_e, the derivative of the loss with respect to the weight of the added expert, by central differences
+    def expected_additions(self, model, traces, loss_with, eps=1e-6):
+        b_r, W_r = np.zeros_like(model.params["b_r"]), np.zeros_like(model.params["W_r"])
+        for t, trace in enumerate(traces):
+            ordered = np.sort(trace["router_logits"])[::-1]
+            self.assertGreater(ordered[1] - ordered[2], 1e-4)  # the nudges can't change a selection
+            z = trace["router_logits"] / self.TAU
+            for e in sorted(set(range(len(z))) - set(trace["selected"].tolist())):
+                c = (loss_with(t, e, eps) - loss_with(t, e, -eps)) / (2 * eps)
+                a = np.exp(z[e]) / (np.exp(z[e]) + np.exp(z[trace["selected"]]).sum())
+                b_r[e] += a * (1 - a) * c / self.TAU
+                W_r[e] += a * (1 - a) * c / self.TAU * trace["q"]
+        return b_r, W_r
+
+    def check(self, grads, expected):
+        for name in ("W_x", "W_h", "b", "W_y", "b_y"):  # exact, unchanged
+            np.testing.assert_array_equal(grads["dense"][name], grads["selected"][name], err_msg=name)
+        for name, added in zip(("b_r", "W_r"), expected):
+            self.assertGreater(np.abs(added).max(), 1e-6)
+            np.testing.assert_allclose(grads["dense"][name] - grads["selected"][name], added, rtol=1e-5, atol=1e-10,
+                                       err_msg=name)
+
+    def test_over_a_sequence(self):
+        sequence, label = SequenceGradientTest.SEQUENCE, 1
+        grads = {}
+        for model in self.models():
+            sequence_model = SequenceSSNN(model)
+            _, traces = sequence_model.forward(sequence)
+            grads[model.config["router_gradient"]] = sequence_model.gradients(traces, label)[1]
+
+        self.check(grads, self.expected_additions(model, traces, lambda t, e, weight: loss_with_an_added_expert(
+            model, sequence, label, t, e, weight)))
+
+    def test_on_one_event_from_a_given_state(self):
+        # Independent examples treat the state before the event as a constant: only the read of the added expert counts
+        rng = np.random.default_rng(4)
+        x, label = rng.normal(0, 1, 4), 0
+        state = State(rng.normal(0, 0.5, (5, 5)), rng.normal(0, 0.5, 5))
+        grads = {}
+        for model in self.models():
+            _, _, trace = model.step(x, state)
+            grads[model.config["router_gradient"]] = task_gradients(model, trace, label)[1]
+
+        self.check(grads, self.expected_additions(model, [trace], lambda t, e, weight: loss_with_an_added_expert(
+            model, [x], label, t, e, weight, state)))
+
+    def test_one_expert_per_event_gets_a_router_gradient(self):
+        # With k = 1 the weight of the only expert is always 1: without the dense gradient, the task gives the router
+        # nothing to learn from
+        trained = {}
+        for mode in ("selected", "dense"):
+            model = SequenceSSNN(SSNN(make_config(dtype="float64", input_dim=4, state_dim=5, num_experts=3, top_k=1,
+                                                  write="gated", router_gradient=mode), seed=1))
+            _, traces = model.forward(SequenceGradientTest.SEQUENCE)
+            trained[mode] = model.gradients(traces, 1)[1]["W_r"]
+        self.assertFalse(np.any(trained["selected"]))
+        self.assertTrue(np.any(trained["dense"]))
 
 
 class MemoryGradientTest(unittest.TestCase):
