@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from unittest import mock
 
 import numpy as np
-from joblib import load
+from joblib import dump, load
 
 from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax, tanh, tanh_derivative
 from data import set_seed, to_categorical
@@ -426,6 +426,24 @@ class OptimizerTest(unittest.TestCase):
         rmsprop.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
         np.testing.assert_allclose(layers[0]["weights"], [[1 - 0.2 / np.sqrt(0.4) - 0.4 / 1.4]])
 
+    def test_a_layer_added_after_training_is_trained_too(self):
+        # The optimizers keep a state per layer; a new layer gets one too, instead of being left out of the updates
+        rng = np.random.default_rng(11)
+        inputs = rng.normal(0, 1, (8, NUM_INPUTS))
+
+        for optimizer in ("momentum", "rmsprop", "adam"):
+            with self.subTest(optimizer=optimizer):
+                np.random.seed(0)
+                model = FeedForward()
+                model.add_layer(num_inputs=NUM_INPUTS, num_neurons=NUM_HIDDEN, act_fn="tanh")
+                model.configure(loss="mse", optimizer=optimizer)
+                model.train(inputs, rng.normal(0, 1, (8, NUM_HIDDEN)), epochs=1, learning_rate=0.01)
+
+                model.add_layer(num_inputs=NUM_HIDDEN, num_neurons=NUM_OUTPUTS, act_fn="linear")
+                before = model.layers[1]["weights"].copy()
+                model.train(inputs, rng.normal(0, 1, (8, NUM_OUTPUTS)), epochs=1, learning_rate=0.01)
+                self.assertFalse(np.array_equal(model.layers[1]["weights"], before))
+
     def test_first_adam_step_doesnt_depend_on_the_gradient_scale(self):
         # SGD moves each parameter in proportion to its gradient; the first Adam step is about the learning rate
         gradients = [(np.array([[1e-4, 1e3]]), np.array([-5.0]))]
@@ -559,22 +577,25 @@ class LossAndOutputTest(unittest.TestCase):
 
 
 class EarlyStoppingTest(unittest.TestCase):
-    def train(self, val_losses, epochs, patience):
+    def train(self, val_losses, epochs, patience, optimizer="sgd", verbose=False):
         # The validation losses of the epochs are given: evaluate is replaced, and keeps the weights after each epoch
         np.random.seed(0)
         rng = np.random.default_rng(9)
         model = build_model("relu", "linear", "mse")
+        model.configure(loss="mse", optimizer=optimizer)
         weights_after = []
+        output = io.StringIO()
 
         def evaluate(inputs, targets):
             weights_after.append(model.get_layers())
             return val_losses[len(weights_after) - 1], None
 
-        with mock.patch.object(model, "evaluate", side_effect=evaluate), redirect_stdout(io.StringIO()):
+        with mock.patch.object(model, "evaluate", side_effect=evaluate), redirect_stdout(output):
             model.train(rng.normal(0, 1, (8, NUM_INPUTS)), rng.normal(0, 1, (8, NUM_OUTPUTS)), epochs=epochs,
                         learning_rate=0.1, batch_size=4, validation_data=([[0.0] * NUM_INPUTS], [[0.0] * NUM_OUTPUTS]),
-                        patience=patience)
+                        patience=patience, verbose=verbose)
 
+        self.output = output.getvalue()
         return model, weights_after
 
     def test_stops_after_patience_epochs_without_improvement(self):
@@ -591,6 +612,18 @@ class EarlyStoppingTest(unittest.TestCase):
         self.assertEqual(len(model.history["loss"]), 3)
         self.assertEqual(model.history["best_epoch"], 2)
         np.testing.assert_array_equal(model.layers[0]["weights"], weights_after[1][0]["weights"])
+
+    def test_the_optimizer_goes_back_with_the_weights(self):
+        # 2 updates per epoch (8 samples in batches of 4): the best epoch, 2, ends after 4 updates
+        model, _ = self.train([1.0, 0.5, 0.7, 0.6], epochs=4, patience=2, optimizer="adam")
+        self.assertEqual(model.optimizer.t, 4)
+
+    def test_explains_a_validation_loss_that_is_never_a_number(self):
+        model, _ = self.train([np.nan] * 5, epochs=5, patience=2, verbose=True)
+
+        self.assertEqual(len(model.history["loss"]), 2)  # stops after patience epochs without a valid one
+        self.assertNotIn("best_epoch", model.history)
+        self.assertIn("the training diverged", self.output)
 
     def test_needs_validation_data(self):
         model = build_model("relu", "linear", "mse")
@@ -662,6 +695,19 @@ class DropoutTest(unittest.TestCase):
         for dropout in (-0.1, 1.0):
             with self.subTest(dropout=dropout), self.assertRaises(ValueError):
                 FeedForward().add_layer(num_inputs=2, num_neurons=2, act_fn="relu", dropout=dropout)
+
+    def test_a_saved_layer_without_its_activation_doesnt_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filepath = os.path.join(directory, "model.joblib")
+            model = self.model(dropout=0.0)
+            model.save(filepath)
+
+            saved = load(filepath)
+            del saved["layers"][0]["act_fn"]
+            dump(saved, filepath)
+
+            with self.assertRaises(KeyError):
+                load_model(filepath)
 
     def test_dropout_is_saved_with_the_model(self):
         model = self.model(dropout=0.2)

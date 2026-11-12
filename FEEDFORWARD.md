@@ -193,13 +193,14 @@ On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
 | SGD, `learning_rate=0.001` | 58.6% | 81.2% | 89.8% | 87.3% |
 
 Adam learns more per epoch and doesn't need a learning rate tuned to the scale of the gradients: with Adam's
-`0.001`, SGD learns much more slowly (89.8% after 10 epochs).
+`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though: the training
+took about 1.7 times as long (15 s against 9 s).
 
 `compare-optimizers.py` trains the same network with the four optimizers over a range of learning rates, on 10,000
 MNIST images for 8 epochs, and plots `optimizers.png`. The best learning rate was 0.3 for SGD, 0.1 for momentum and
 0.003 for RMSprop and Adam: they differ by 100 times, so comparing optimizers with the same learning rate says little.
 With its best learning rate, every optimizer ended between 0.16 and 0.19 of validation loss, so a tuned SGD comes
-close; momentum and Adam got there fastest, with 0.25 after the first epoch against 0.48 for SGD. Each Adam update does more work, though: the training took about 1.7 times as long (15 s against 9 s).
+close; momentum and Adam got there fastest, with 0.25 after the first epoch against 0.48 for SGD.
 
 ### Weight initialization
 
@@ -304,8 +305,8 @@ history = model.train(inputs, targets, epochs=500, learning_rate=0.01, batch_siz
   is calculated after each epoch, to see whether the model generalizes or starts to overfit.
 - **patience**: early stopping, with `validation_data` (default None). The training stops when the validation loss
   hasn't improved for `patience` epochs in a row, and the model goes back to the weights of the epoch with the lowest
-  validation loss, also when it runs all the epochs. Past that epoch the model starts to memorize the training data
-  (overfitting), so `epochs` becomes only a limit.
+  validation loss, also when it runs all the epochs (and the optimizer to its state at that epoch). Past that epoch
+  the model starts to memorize the training data (overfitting), so `epochs` becomes only a limit.
 
 `train` returns `model.history`, with the loss of each epoch (`loss`), the validation metrics (`val_loss`,
 `val_accuracy`) and, with `patience`, the epoch whose weights the model kept (`best_epoch`).

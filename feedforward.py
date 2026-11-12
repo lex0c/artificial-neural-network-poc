@@ -36,7 +36,16 @@ def layer_forward(inputs, weights, biases, act_fn):
 
 def load_model(filepath):
     model_params = load(filepath)
-    layers = [{key: l[key] for key in ("weights", "biases", "act_fn", "dropout") if key in l} for l in model_params["layers"]]
+    layers = []
+
+    for saved in model_params["layers"]:
+        layer = {"weights": saved["weights"], "biases": saved["biases"], "act_fn": saved["act_fn"]}
+
+        if "dropout" in saved:  # only in the layers that have it
+            layer["dropout"] = saved["dropout"]
+
+        layers.append(layer)
+
     return FeedForward(layers=layers, configs=model_params["configs"])
 
 
@@ -168,7 +177,7 @@ class FeedForward:
     #
     # patience: early stopping, with validation_data. The training stops when the validation loss hasn't improved for
     # patience epochs in a row, and the model goes back to the weights of the epoch with the lowest validation loss
-    # (also when it runs all the epochs). Past that epoch, the model memorizes the training data instead of learning
+    # (also when it runs all the epochs), and the optimizer to its state at that epoch. Past that epoch, the model memorizes the training data instead of learning
     # what generalizes (overfitting), so the number of epochs no longer has to be guessed.
     #
     # verbose: show a progress bar during each epoch, and a line with the loss every log_every epochs (and the last).
@@ -186,7 +195,7 @@ class FeedForward:
         self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
         start_time = time.time()
         progress_line = ""
-        best_val_loss, best_epoch, best_layers = math.inf, 0, None  # for early stopping
+        best_val_loss, best_epoch, best_layers, best_optimizer = math.inf, 0, None, None  # for early stopping
         stop = False
 
         for epoch in range(epochs):
@@ -220,6 +229,7 @@ class FeedForward:
                 if patience is not None:
                     if val_loss < best_val_loss:
                         best_val_loss, best_epoch, best_layers = val_loss, epoch + 1, self.get_layers()
+                        best_optimizer = copy.deepcopy(self.optimizer)  # its state goes back with the weights
                     elif epoch + 1 - best_epoch >= patience:
                         stop = True
 
@@ -228,7 +238,7 @@ class FeedForward:
                                        "val_accuracy": self.history["val_accuracy"][-1] if validation_data is not None else None})
 
             if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs or stop):
-                summary += f" - {timing(start_time, epoch + 1, epochs)}"
+                summary += f" - {timing(start_time, epoch + 1, epoch + 1 if stop else epochs)}"
                 print("\r" + summary.ljust(len(progress_line)))  # replaces the progress bar of the epoch
 
             if stop:
@@ -237,8 +247,8 @@ class FeedForward:
         if verbose:
             print("\r" + " " * len(progress_line), end="\r")  # clears a progress bar left by an epoch without summary
 
-        if patience is not None and best_layers is not None:  # None when no epoch had a valid validation loss
-            self.set_layers(best_layers)
+        if patience is not None and best_layers is not None:
+            self.layers, self.optimizer = best_layers, best_optimizer  # copies of their own, kept at the best epoch
             self.history["best_epoch"] = best_epoch
 
             if verbose:
@@ -248,6 +258,11 @@ class FeedForward:
                           f"The model goes back to the weights of epoch {best}.")
                 else:
                     print(f"The model keeps the weights of its best epoch: {best}.")
+
+        elif patience is not None and verbose:  # no epoch had a valid validation loss
+            stopped = f"Early stopping at epoch {epoch + 1}: " if stop else ""
+            print(f"{stopped}the validation loss was never a number (NaN or infinite): the training diverged, and the "
+                  "model keeps the weights of its last epoch. A smaller learning rate usually prevents it.")
 
         return self.history
 

@@ -1,6 +1,3 @@
-import io
-from contextlib import redirect_stdout
-
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -24,22 +21,25 @@ args = training_args("Compares SGD, momentum, RMSprop and Adam on MNIST, over a 
 images, labels = train_images[:10000], train_labels[:10000]            # a part of the training images, to be quick
 val_images, val_labels = train_images[-5000:], train_labels[-5000:]    # not used for training
 
+# One seed for every run: the same initial weights and order of the samples for every optimizer and learning rate
+seed = args.seed if args.seed is not None else int(np.random.randint(2 ** 31))
+print(f"Seed {seed} (to repeat this run: --seed {seed})\n")
+
 OPTIMIZERS = ("sgd", "momentum", "rmsprop", "adam")
 LEARNING_RATES = (1, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001, 0.0003)
 
 
 # The validation loss before the training and after each epoch
 def train(optimizer, learning_rate):
-    set_seed(0 if args.seed is None else args.seed)  # the same initial weights and order of the samples for every run
+    set_seed(seed)
     model = FeedForward()
     model.add_layer(num_inputs=784, num_neurons=64, act_fn='relu')
     model.add_layer(num_inputs=64, num_neurons=10, act_fn='softmax')
     model.configure(loss='sparse_categorical_crossentropy', optimizer=optimizer)
 
     initial_loss, _ = model.evaluate(val_images, val_labels)
-    with redirect_stdout(io.StringIO()):
-        history = model.train(images, labels, epochs=args.epochs, learning_rate=learning_rate, batch_size=64,
-                              validation_data=(val_images, val_labels))
+    history = model.train(images, labels, epochs=args.epochs, learning_rate=learning_rate, batch_size=64,
+                          validation_data=(val_images, val_labels))
     return [initial_loss] + history["val_loss"]
 
 

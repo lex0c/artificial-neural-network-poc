@@ -102,6 +102,7 @@ def keep_dashboard_open(monitor):
     if monitor is None:
         return
 
+    monitor.refresh()  # the final weights, even when the last copy came before them
     print("The dashboard stays open with the last state: press Ctrl+C to exit")
 
     try:

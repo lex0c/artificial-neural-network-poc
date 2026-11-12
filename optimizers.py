@@ -5,6 +5,17 @@ import numpy as np
 # Each one has update(layers, gradients, learning_rate), where gradients holds (dL/dweights, dL/dbiases) per layer.
 
 
+# The state that momentum, RMSprop and Adam keep for every parameter: an array of zeros shaped like the weights and the
+# biases of each layer. It starts over when the number of layers changes (a layer added after some training), so the
+# new layer gets a state of its own instead of being left out.
+def zeros_like_layers(layers):
+    return [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+
+
+def needs_new_state(state, layers):
+    return state is None or len(state) != len(layers)
+
+
 # Plain gradient descent: every parameter moves by -learning_rate * gradient. The step is proportional to the gradient,
 # so parameters with small gradients learn slowly, and one learning rate has to suit every parameter.
 class SGD:
@@ -24,8 +35,8 @@ class Momentum:
         self.velocity = None
 
     def update(self, layers, gradients, learning_rate):
-        if self.velocity is None:
-            self.velocity = [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+        if needs_new_state(self.velocity, layers):
+            self.velocity = zeros_like_layers(layers)
 
         for layer, velocity, layer_gradients in zip(layers, self.velocity, gradients):
             for key, grad in zip(("weights", "biases"), layer_gradients):
@@ -45,8 +56,8 @@ class RMSprop:
         self.mean_square = None
 
     def update(self, layers, gradients, learning_rate):
-        if self.mean_square is None:
-            self.mean_square = [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+        if needs_new_state(self.mean_square, layers):
+            self.mean_square = zeros_like_layers(layers)
 
         for layer, mean_square, layer_gradients in zip(layers, self.mean_square, gradients):
             for key, grad in zip(("weights", "biases"), layer_gradients):
@@ -76,9 +87,9 @@ class Adam:
         self.t = 0              # number of updates so far
 
     def update(self, layers, gradients, learning_rate):
-        if self.m is None:
-            self.m = [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
-            self.v = [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+        if needs_new_state(self.m, layers):
+            self.m, self.v = zeros_like_layers(layers), zeros_like_layers(layers)
+            self.t = 0  # the bias correction starts over with the averages
 
         self.t += 1
 
