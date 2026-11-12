@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 import numpy as np
 from joblib import load
@@ -10,7 +11,7 @@ from joblib import load
 from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax, tanh, tanh_derivative
 from data import set_seed, to_categorical
 from feedforward import FeedForward, load_model, clone_model
-from losses import loss_derivative_fn, loss_fn, softmax_crossentropy_delta
+from losses import loss_derivative_fn, loss_fn, sigmoid_binary_crossentropy_delta, softmax_crossentropy_delta
 from optimizers import Adam, SGD
 
 
@@ -33,6 +34,8 @@ def make_targets(loss, output_act, rng):
         return rng.integers(0, NUM_OUTPUTS, NUM_SAMPLES)
     if loss == "categorical_crossentropy":
         return to_categorical(rng.integers(0, NUM_OUTPUTS, NUM_SAMPLES), num_classes=NUM_OUTPUTS)
+    if loss == "binary_crossentropy":
+        return rng.integers(0, 2, (NUM_SAMPLES, NUM_OUTPUTS)).astype(float)  # a yes/no answer per output
     if output_act == "sigmoid":
         return rng.uniform(0, 1, (NUM_SAMPLES, NUM_OUTPUTS))
     return rng.normal(0, 1, (NUM_SAMPLES, NUM_OUTPUTS))
@@ -95,6 +98,7 @@ class GradientCheckTest(unittest.TestCase):
         ("relu", "softmax", "mse"),  # backpropagates through the softmax Jacobian
         ("sigmoid", "softmax", "categorical_crossentropy"),  # softmax + cross-entropy shortcut
         ("relu", "softmax", "sparse_categorical_crossentropy"),
+        ("relu", "sigmoid", "binary_crossentropy"),  # sigmoid + binary cross-entropy shortcut
     ]
 
     def test_backpropagation_matches_numerical_gradients(self):
@@ -312,6 +316,39 @@ class KnownValuesTest(unittest.TestCase):
         np.testing.assert_allclose(softmax_crossentropy_delta("sparse_categorical_crossentropy", self.CLASSES, self.PREDICTIONS), expected)
 
 
+    def test_binary_crossentropy(self):
+        # Answers yes (1) with probability 0.8 and no (0) with probability 0.3 of yes: -(log 0.8 + log 0.7) / 2
+        y_true, y_pred = [1, 0], [0.8, 0.3]
+
+        self.assertAlmostEqual(loss_fn("binary_crossentropy", y_true, y_pred), -(np.log(0.8) + np.log(0.7)) / 2)
+        # (p - y) / (p (1 - p)) / 2
+        np.testing.assert_allclose(loss_derivative_fn("binary_crossentropy", y_true, y_pred), [-0.2 / 0.16 / 2, 0.3 / 0.21 / 2])
+
+    def test_sigmoid_binary_crossentropy_shortcut(self):
+        # (p - y) / number of values, the derivative of the loss times the derivative of the sigmoid, p (1 - p)
+        y_true, y_pred = np.array([[1.0, 0.0]]), np.array([[0.8, 0.3]])
+        chain_rule = loss_derivative_fn("binary_crossentropy", y_true, y_pred) * y_pred * (1 - y_pred)
+
+        np.testing.assert_allclose(sigmoid_binary_crossentropy_delta(y_true, y_pred), [[-0.1, 0.15]])
+        np.testing.assert_allclose(sigmoid_binary_crossentropy_delta(y_true, y_pred), chain_rule)
+
+    def test_binary_crossentropy_corrects_a_confident_mistake(self):
+        # A sigmoid output answers 0.0025 (z = -6) for a sample whose answer is 1. With mse, the gradient of z is
+        # 2 (p - y) * p (1 - p), almost 0 because the sigmoid is flat there; with binary cross-entropy it is p - y.
+        deltas = {}
+
+        for loss in ("mse", "binary_crossentropy"):
+            model = FeedForward()
+            model.add_layer(num_inputs=1, num_neurons=1, act_fn="sigmoid")
+            model.configure(loss=loss)
+            model.layers[0]["weights"][:] = 0.0
+            model.layers[0]["biases"][:] = -6.0
+            deltas[loss] = model.output_delta(np.array([[1.0]]), model.forward_layers(np.array([[0.0]])))[0, 0]
+
+        self.assertAlmostEqual(deltas["binary_crossentropy"], sigmoid(-6.0) - 1)
+        self.assertLess(abs(deltas["mse"]), abs(deltas["binary_crossentropy"]) / 100)
+
+
 class WorkedExampleTest(unittest.TestCase):
     def test_worked_example_in_feedforward_md(self):
         # The training step worked out by hand in FEEDFORWARD.md: y = w * x + b with w = 0.5, b = 0,
@@ -449,6 +486,15 @@ class MetricsTest(unittest.TestCase):
 
         self.assertAlmostEqual(model.evaluate([[-2.0], [-1.0], [1.0], [2.0]], [0, 1, 1, 1])[1], 0.75)
 
+    def test_binary_accuracy_counts_each_answer(self):
+        # Two yes/no answers per sample (binary_crossentropy): 3 of the 4 answers are right
+        model = FeedForward()
+        model.add_layer(num_inputs=2, num_neurons=2, act_fn="sigmoid")
+        model.configure(loss="binary_crossentropy")
+        predictions, labels = np.array([[0.9, 0.2], [0.4, 0.7]]), np.array([[1, 0], [1, 1]])
+
+        self.assertAlmostEqual(model.accuracy(predictions, labels), 0.75)
+
     def test_validation_metrics_per_epoch(self):
         np.random.seed(0)
         rng = np.random.default_rng(8)
@@ -467,6 +513,64 @@ class MetricsTest(unittest.TestCase):
         val_loss, val_accuracy = model.evaluate(val_inputs, val_targets)
         self.assertAlmostEqual(model.history["val_loss"][-1], val_loss)
         self.assertAlmostEqual(model.history["val_accuracy"][-1], val_accuracy)
+
+
+class LossAndOutputTest(unittest.TestCase):
+    def test_crossentropy_needs_its_output_activation(self):
+        for output_act, loss in (("sigmoid", "categorical_crossentropy"), ("linear", "sparse_categorical_crossentropy"),
+                                 ("softmax", "binary_crossentropy"), ("relu", "binary_crossentropy")):
+            with self.subTest(output=output_act, loss=loss), self.assertRaises(ValueError):
+                build_model("relu", output_act, loss)
+
+    def test_checked_again_when_training(self):
+        # configure before the output layer exists can't check it, so train does
+        model = FeedForward()
+        model.configure(loss="categorical_crossentropy")
+        model.add_layer(num_inputs=1, num_neurons=1, act_fn="sigmoid")
+
+        with self.assertRaises(ValueError):
+            model.train([[0.0]], [[1.0]], epochs=1, learning_rate=0.1)
+
+
+class EarlyStoppingTest(unittest.TestCase):
+    def train(self, val_losses, epochs, patience):
+        # The validation losses of the epochs are given: evaluate is replaced, and keeps the weights after each epoch
+        np.random.seed(0)
+        rng = np.random.default_rng(9)
+        model = build_model("relu", "linear", "mse")
+        weights_after = []
+
+        def evaluate(inputs, targets):
+            weights_after.append(model.get_layers())
+            return val_losses[len(weights_after) - 1], None
+
+        with mock.patch.object(model, "evaluate", side_effect=evaluate), redirect_stdout(io.StringIO()):
+            model.train(rng.normal(0, 1, (8, NUM_INPUTS)), rng.normal(0, 1, (8, NUM_OUTPUTS)), epochs=epochs,
+                        learning_rate=0.1, batch_size=4, validation_data=([[0.0] * NUM_INPUTS], [[0.0] * NUM_OUTPUTS]),
+                        patience=patience)
+
+        return model, weights_after
+
+    def test_stops_after_patience_epochs_without_improvement(self):
+        # Best at epoch 2 (0.5); epochs 3 and 4 aren't better, so with patience 2 it stops after epoch 4
+        model, weights_after = self.train([1.0, 0.5, 0.7, 0.6, 0.4, 0.3], epochs=6, patience=2)
+
+        self.assertEqual(len(model.history["loss"]), 4)
+        self.assertEqual(model.history["best_epoch"], 2)
+        np.testing.assert_array_equal(model.layers[0]["weights"], weights_after[1][0]["weights"])  # back to epoch 2
+
+    def test_restores_the_best_epoch_without_stopping(self):
+        model, weights_after = self.train([1.0, 0.5, 0.7], epochs=3, patience=5)
+
+        self.assertEqual(len(model.history["loss"]), 3)
+        self.assertEqual(model.history["best_epoch"], 2)
+        np.testing.assert_array_equal(model.layers[0]["weights"], weights_after[1][0]["weights"])
+
+    def test_needs_validation_data(self):
+        model = build_model("relu", "linear", "mse")
+
+        with self.assertRaises(ValueError):
+            model.train([[0.0] * NUM_INPUTS], [[0.0] * NUM_OUTPUTS], epochs=1, learning_rate=0.1, patience=2)
 
 
 class DatasetShapeTest(unittest.TestCase):

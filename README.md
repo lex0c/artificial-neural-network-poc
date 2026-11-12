@@ -30,7 +30,7 @@ here).
 2. **The framework**:
    - `feedforward.py`: the `FeedForward` model. Start with `train_step`, which calls the five steps of a training step.
    - `activations.py`: ReLU, sigmoid, tanh, linear and softmax, and their derivatives.
-   - `losses.py`: mean squared error and cross-entropy, and their derivatives.
+   - `losses.py`: mean squared error and cross-entropy (categorical and binary), and their derivatives.
    - `optimizers.py`: plain gradient descent (SGD) and Adam.
    - `data.py`: one-hot encoding, normalization, batches and seeds.
 3. **The examples**, from the simplest (below).
@@ -80,6 +80,11 @@ and validation. `mnist.py` downloads the dataset once (about 11 MB) into `datase
 python train-mnist.py   # trains and saves models/mnist.joblib (about 15 seconds)
 python run-mnist.py     # per-digit report, confusion matrix, and the first mistakes in mnist-errors.png
 ```
+
+The training of 10 epochs stops near the best moment: after it, the validation loss rises while the training loss
+keeps falling (overfitting). `python train-mnist.py --epochs 30 --patience 3` finds that moment by itself (early
+stopping): it stops when the validation loss hasn't improved for 3 epochs and goes back to the best epoch. Over 5
+seeds it stopped after 8 to 12 epochs and scored the same 97.8% as the 10 fixed epochs, which were chosen by hand.
 
 ### 4. Reinforcement learning: CartPole, Acrobot and LunarLander
 

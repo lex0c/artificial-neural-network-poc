@@ -130,12 +130,24 @@ model towards it.
 | `mse` | mean of `(y_pred - y_true)^2` | regression |
 | `categorical_crossentropy` | `-sum(y_true * log(y_pred))`, with one-hot `y_true` | classification with a softmax output |
 | `sparse_categorical_crossentropy` | the same, with class indices as labels | classification with a softmax output |
+| `binary_crossentropy` | mean of `-(y_true * log(y_pred) + (1 - y_true) * log(1 - y_pred))`, with `y_true` 0 or 1 | yes/no answers with sigmoid outputs (one, or several independent ones) |
 
 Cross-entropy is minus the log of the probability given to the true class: close to 0 when that probability is close
 to 1, and very large when a confident prediction is wrong. The probabilities are clipped to `[1e-7, 1 - 1e-7]` so that
 `log(0)` can't happen; the derivatives ignore this clipping, so the gradient doesn't vanish when a prediction is
 completely wrong. With a softmax output, its gradient with respect to `z` simplifies to
 `(y_pred - y_true) / batch_size` (`softmax_crossentropy_delta`), which `output_delta` uses directly.
+
+Binary cross-entropy has the same shortcut with a sigmoid output, `(y_pred - y_true)` divided by the number of values
+(`sigmoid_binary_crossentropy_delta`). It matters most when the model is confidently wrong: with `mse`, the gradient
+of `z` of a sigmoid output is `2 (y_pred - y_true) * y_pred (1 - y_pred)`, and the last factor is almost 0 at both ends
+of the sigmoid. For an output of 0.0025 whose answer is 1, `mse` gives a gradient of -0.005 and binary cross-entropy
+-0.998.
+
+Each cross-entropy needs its output activation, and `configure` (and `train`) raise a `ValueError` otherwise: the
+categorical ones a softmax, the binary one a sigmoid. With another output they would train wrong without any error.
+For example, the categorical cross-entropy of a single sigmoid output is `-y_true * log(y_pred)`, which is 0 for every
+sample whose answer is 0, so nothing pushes `y_pred` down and the model learns to answer 1 for everything.
 
 Sigmoid and tanh saturate: for a large `|z|` their output is almost flat, so their derivative is close to 0 and the
 gradient fades as it goes back through many such layers. ReLU doesn't saturate for positive `z`, which is why it
@@ -260,9 +272,13 @@ history = model.train(inputs, targets, epochs=500, learning_rate=0.01, batch_siz
   (default 1).
 - **validation_data**: optional `(inputs, targets)` not used for training. Its loss (and accuracy, for classification)
   is calculated after each epoch, to see whether the model generalizes or starts to overfit.
+- **patience**: early stopping, with `validation_data` (default None). The training stops when the validation loss
+  hasn't improved for `patience` epochs in a row, and the model goes back to the weights of the epoch with the lowest
+  validation loss, also when it runs all the epochs. Past that epoch the model starts to memorize the training data
+  (overfitting), so `epochs` becomes only a limit.
 
-`train` returns `model.history`, with the loss of each epoch (`loss`) and the validation metrics (`val_loss`,
-`val_accuracy`).
+`train` returns `model.history`, with the loss of each epoch (`loss`), the validation metrics (`val_loss`,
+`val_accuracy`) and, with `patience`, the epoch whose weights the model kept (`best_epoch`).
 
 ### Evaluate
 
@@ -276,6 +292,8 @@ print(test_loss, test_accuracy)  # a small loss, and None: there is no accuracy 
 
 The accuracy depends on the output layer:
 
+- `binary_crossentropy`: each output is a yes/no answer (yes above 0.5), and the accuracy is the fraction of the
+  answers that are right.
 - **softmax**, several **sigmoid** outputs or class indices (`sparse_categorical_crossentropy`): the output with the
   highest value is the predicted class.
 - a single **sigmoid** output (binary classification): above 0.5 is class 1.

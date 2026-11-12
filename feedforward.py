@@ -10,7 +10,8 @@ from threadpoolctl import threadpool_limits
 from activations import ACTIVATIONS, activation_fn, activation_backward
 from data import apply_minmax, create_batches, minmax_stats
 from losses import (
-    check_loss, clip_gradients, is_softmax_crossentropy, loss_derivative_fn, loss_fn, softmax_crossentropy_delta,
+    check_loss, check_output_for_loss, clip_gradients, is_sigmoid_binary_crossentropy, is_softmax_crossentropy,
+    loss_derivative_fn, loss_fn, sigmoid_binary_crossentropy_delta, softmax_crossentropy_delta,
 )
 from optimizers import make_optimizer
 from progress import format_number, timing
@@ -91,6 +92,9 @@ class FeedForward:
         if loss is not None:
             check_loss(loss)
 
+            if self.layers:
+                check_output_for_loss(self.layers[-1]["act_fn"], loss)  # e.g. a cross-entropy needs probabilities
+
         self.configs["loss"] = loss
         self.configs["optimizer"] = optimizer
         self.optimizer = make_optimizer(optimizer)  # a new optimizer starts without the state of the previous one
@@ -140,17 +144,28 @@ class FeedForward:
     # validation_data: optional (inputs, targets) not used for training. Its loss (and accuracy, for classification)
     # is calculated after each epoch, to see whether the model generalizes or starts to overfit.
     #
+    # patience: early stopping, with validation_data. The training stops when the validation loss hasn't improved for
+    # patience epochs in a row, and the model goes back to the weights of the epoch with the lowest validation loss
+    # (also when it runs all the epochs). Past that epoch, the model memorizes the training data instead of learning
+    # what generalizes (overfitting), so the number of epochs no longer has to be guessed.
+    #
     # verbose: show a progress bar during each epoch, and a line with the loss every log_every epochs (and the last).
     #
-    # Returns self.history: the loss of each epoch, and the validation metrics.
+    # Returns self.history: the loss of each epoch, the validation metrics and, with patience, the best epoch.
     def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0,
-              shuffle=True, verbose=False, validation_data=None, log_every=1):
+              shuffle=True, verbose=False, validation_data=None, log_every=1, patience=None):
+        if patience is not None and (validation_data is None or patience < 1):
+            raise ValueError("patience needs validation_data and must be at least 1")
+
+        check_output_for_loss(self.layers[-1]["act_fn"], self.configs["loss"])
         inputs, targets = self.prepare_dataset(inputs, targets)
         inputs = self.normalize(inputs)  # once for the whole dataset (train_step expects normalized inputs)
         num_batches = math.ceil(len(inputs) / batch_size)
         self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
         start_time = time.time()
         progress_line = ""
+        best_val_loss, best_epoch, best_layers = math.inf, 0, None  # for early stopping
+        stop = False
 
         for epoch in range(epochs):
             order = np.random.permutation(len(inputs)) if shuffle else np.arange(len(inputs))
@@ -179,16 +194,38 @@ class FeedForward:
                 if val_accuracy is not None:
                     summary += f" - val_accuracy {val_accuracy:.4f}"
 
+                # Early stopping: keep the weights of the best epoch, and stop after patience epochs without a better one
+                if patience is not None:
+                    if val_loss < best_val_loss:
+                        best_val_loss, best_epoch, best_layers = val_loss, epoch + 1, self.get_layers()
+                    elif epoch + 1 - best_epoch >= patience:
+                        stop = True
+
             self.notify("on_metrics", {"epoch": epoch + 1, "loss": self.history["loss"][-1],
                                        "val_loss": self.history["val_loss"][-1] if validation_data is not None else None,
                                        "val_accuracy": self.history["val_accuracy"][-1] if validation_data is not None else None})
 
-            if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs):
+            if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs or stop):
                 summary += f" - {timing(start_time, epoch + 1, epochs)}"
                 print("\r" + summary.ljust(len(progress_line)))  # replaces the progress bar of the epoch
 
+            if stop:
+                break
+
         if verbose:
             print("\r" + " " * len(progress_line), end="\r")  # clears a progress bar left by an epoch without summary
+
+        if patience is not None and best_layers is not None:  # None when no epoch had a valid validation loss
+            self.set_layers(best_layers)
+            self.history["best_epoch"] = best_epoch
+
+            if verbose:
+                best = f"{best_epoch} (val_loss {format_number(best_val_loss)})"
+                if stop:
+                    print(f"Early stopping at epoch {epoch + 1}: no better validation loss for {patience} epochs. "
+                          f"The model goes back to the weights of epoch {best}.")
+                else:
+                    print(f"The model keeps the weights of its best epoch: {best}.")
 
         return self.history
 
@@ -214,6 +251,10 @@ class FeedForward:
         # Softmax with cross-entropy: the chain rule simplifies to (predictions - targets) / batch_size
         if is_softmax_crossentropy(output_layer["act_fn"], self.configs["loss"]):
             return softmax_crossentropy_delta(self.configs["loss"], targets, predictions)
+
+        # Sigmoid with binary cross-entropy: likewise, (predictions - targets) / (batch_size * num_outputs)
+        if is_sigmoid_binary_crossentropy(output_layer["act_fn"], self.configs["loss"]):
+            return sigmoid_binary_crossentropy_delta(targets, predictions)
 
         # Otherwise, the derivative of the loss gives dL/dy (clipped, see clip_gradients), and the chain rule through
         # the activation gives dL/dz = dL/dy * f'(z)
@@ -332,6 +373,7 @@ class FeedForward:
         return loss, self.accuracy(predictions, test_labels)
 
     # Fraction of correct predictions, for classification models:
+    # - binary_crossentropy: each output is a yes/no answer, yes above 0.5; the fraction of the answers that are right
     # - class indices (sparse_categorical_crossentropy), softmax or several sigmoid outputs: the output with the
     #   highest value is the predicted class
     # - a single sigmoid output (binary classification): above 0.5 is class 1
@@ -339,7 +381,10 @@ class FeedForward:
     def accuracy(self, predictions, labels):
         act_fn = self.layers[-1]["act_fn"]
 
-        if self.configs["loss"] == "sparse_categorical_crossentropy":
+        if self.configs["loss"] == "binary_crossentropy":
+            predicted = predictions > 0.5
+            expected = labels.reshape(predictions.shape) > 0.5
+        elif self.configs["loss"] == "sparse_categorical_crossentropy":
             predicted = np.argmax(predictions, axis=-1)
             expected = labels.astype(int).reshape(predicted.shape)  # labels are class indices
         elif act_fn == "softmax" or (act_fn == "sigmoid" and predictions.shape[-1] > 1):

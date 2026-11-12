@@ -46,6 +46,10 @@ class CliTest(unittest.TestCase):
             args = cli.training_args("test", epochs=10)
         self.assertEqual((args.seed, args.epochs), (None, 10))
         self.assertFalse(hasattr(args, "render"))
+        self.assertFalse(hasattr(args, "patience"))
+
+        with mock.patch.object(sys, "argv", ["train.py", "--patience", "3"]):
+            self.assertEqual(cli.training_args("test", patience=True, epochs=10).patience, 3)
 
     def test_training_length_must_be_positive(self):
         with mock.patch.object(sys, "argv", ["train.py", "--steps", "0"]), mock.patch("sys.stderr"):

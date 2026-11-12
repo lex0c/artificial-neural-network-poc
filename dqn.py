@@ -142,7 +142,8 @@ def learn_from_memory(memory, model, target_model, batch_size, gamma, learning_r
 #   2. learn: fit the model to the Bellman targets of a random batch of batch_size transitions from the memory, with
 #      one gradient descent step per minibatch of minibatch_size transitions
 #   3. evaluate: every eval_freq episodes, play eval_episodes with the greedy policy in eval_env (a separate
-#      environment, so the training one isn't disturbed), and save the checkpoint when it is the best so far
+#      environment, so the training one isn't disturbed), and save the checkpoint when it is the best so far (a
+#      training shorter than eval_freq episodes is evaluated at its end)
 #   4. schedules: explore less (epsilon) and, optionally, lower the learning rate
 #   5. every target_update_freq episodes, copy the model into the target model
 #
@@ -194,7 +195,9 @@ def train_dqn(env, model, target_model, episodes, batch_size, gamma, learning_ra
         # 3. Evaluate
         greedy_reward = None
 
-        if eval_env is not None and (e + 1) % eval_freq == 0:
+        # Also at the end of a training shorter than eval_freq episodes, so its checkpoint isn't left with the
+        # untrained model
+        if eval_env is not None and ((e + 1) % eval_freq == 0 or (e + 1 == episodes and episodes < eval_freq)):
             greedy_reward = evaluate_greedy(eval_env, model, eval_episodes)
 
             if greedy_reward > best_greedy_reward:

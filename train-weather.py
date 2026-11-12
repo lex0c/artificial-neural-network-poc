@@ -7,7 +7,7 @@ from weather import CLASS_NAMES, generate_weather_dataset
 # Classification: predicts the weather condition (Sunny, Cloudy, Rainy or Snowy) from the temperature, humidity and
 # wind speed, and saves the model to models/weather.joblib.
 
-args = training_args("Classification: predicts the weather condition from the temperature, humidity and wind speed.", epochs=100)
+args = training_args("Classification: predicts the weather condition from the temperature, humidity and wind speed.", patience=True, epochs=100)
 set_seed(args.seed)
 
 # categorical_crossentropy compares one-hot labels with the probabilities of the softmax output
@@ -33,7 +33,7 @@ monitor = start_dashboard(args.dashboard, {"weather classifier": model})
 
 # Inputs scaled to [0, 1] give small gradients, so the learning rate can be larger. log_every=10: a line every 10 epochs
 model.train(features, labels_one_hot, epochs=args.epochs, learning_rate=0.1, verbose=True,
-            validation_data=(val_features, val_labels_one_hot), log_every=10)
+            validation_data=(val_features, val_labels_one_hot), log_every=10, patience=args.patience)
 
 test_loss, test_accuracy = model.evaluate(test_features, test_labels_one_hot)
 
