@@ -115,14 +115,69 @@ What it shows:
 
 Training times say nothing about inference speed, which needs its own benchmark.
 
+## Latency on a CPU
+
+Inference of one event at a time, with random weights (the cost of the architecture, not what it learned), d = 32
+inputs, on an Intel i7-9750H (12 MB of L3 cache) with one BLAS thread. Four engines (`inference.py`): the selective
+SSNN, the same architecture running all its experts, a dense RNN that touches as many numbers per event as the
+selective SSNN (the same work), and a dense RNN with as many parameters as the SSNN in total (the same stored
+capacity). Median latency per event, over 6,000 events after a warm-up:
+
+| Experts (E), selected (k), state (H) | Selective | All experts | Dense RNN, same work | Dense RNN, same total |
+| --- | --- | --- | --- | --- |
+| E = 16, k = 2, H = 256 | 42 µs | 116 µs | 20 µs | 79 µs |
+| E = 32, k = 2, H = 256 | 44 µs | 274 µs | 20 µs | 232 µs |
+| E = 64, k = 2, H = 256 | 51 µs | 762 µs | 21 µs | 476 µs |
+| E = 128, k = 2, H = 256 | 61 µs | 1,826 µs | 23 µs | 1,216 µs |
+| E = 128, k = 1, H = 256 | 39 µs | 1,830 µs | 18 µs | 1,217 µs |
+| E = 128, k = 8, H = 256 | 178 µs | 1,833 µs | 47 µs | 1,221 µs |
+| E = 128, k = 2, H = 32 | 31 µs | 61 µs | 9 µs | 29 µs |
+
+`reports/benchmark.csv` has all 10 configurations, with P95, and the same runs with 12 BLAS threads, which only help
+the large dense RNN (1,216 to 1,006 µs) and slow down running all the experts.
+
+What it shows:
+
+- **The selection does what it promises against the full architecture**: the latency barely grows with the number of
+  experts (42 to 61 µs from 16 to 128 experts), while running all of them grows with E. With 128 experts the
+  selective SSNN is 30 times faster than running all of them, and 20 times faster than a dense RNN with the same
+  stored capacity (37 MB of weights).
+- **Against a dense RNN doing the same work per event, it is 2 to 4 times slower** in every configuration. Where the
+  61 µs of the main configuration go: router 6, top-k 8, the 2 experts 39, integrator 2, decoder 7.
+- **Two causes**: an event makes about 30 small NumPy calls, against a few for the RNN, and the overhead of each one
+  dominates when the products are small (with H = 32, 31 against 9 µs). And the experts the router picks change from
+  event to event, so with 37 MB of expert weights, more than the cache holds, theirs come from the main memory: in a
+  separate measurement, forcing the router to always pick the same 2 experts brought their time from about 55 to
+  30 µs. The first cause belongs to a Python implementation; the second to the architecture, unless the routing
+  reuses the same experts.
+
 ## Status of the hypotheses
 
 | Hypothesis | Status |
 | --- | --- |
-| Running k of E experts reduces the computation per event | not measured yet |
-| That sparsity makes inference faster on a CPU, at a similar quality | not measured yet; experiment A puts the quality of the selective version below dense networks of the same work per event |
+| Running k of E experts reduces the computation per event | supported: the cost per event barely depends on E, 30 times less than running all 128 experts |
+| That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event, and less accurate than dense networks of the same work in experiment A |
 | Persistent states help on tasks that need memory | not tested yet: needs a memory task and backpropagation through time |
 | A learned routing specializes the experts | supported in experiment A (better than random routing, 1.1 bits of regime information), with partial specialization |
+
+## Conclusion so far
+
+The mechanism works: the gradients are right, the selective execution matches the dense one, the router learns and
+specializes the experts, and the stored capacity comes almost for free in latency. But against a dense network
+doing the same work per event, the SSNN loses on both fronts, speed and accuracy, even to an MLP of 706 parameters.
+
+The one reason for the architecture is to hold much more capacity than a dense network of the same cost per event can
+use. In experiment A that capacity bought nothing, because the task is too simple. So the question that decides is
+still open: is there a task where the extra capacity buys quality? Next, in this order:
+
+1. **A task that needs capacity**: dozens of regimes, each with its own rule, so that a dense network of the same cost
+   per event can't learn them all and the SSNN can give each regime experts of its own. If the SSNN doesn't win
+   there either, the efficiency hypothesis can be closed.
+2. **A memory task**, to test the persistent states, which experiment A doesn't use.
+3. **Only then, speed** (compiled code, routing with locality): being faster matters only where the SSNN is better.
+
+These are results of a first version: one laptop CPU, Python and NumPy, small tasks, hyperparameters not tuned, 3
+seeds.
 
 ## Notes for a memory task
 
