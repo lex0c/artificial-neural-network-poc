@@ -36,7 +36,7 @@ def layer_forward(inputs, weights, biases, act_fn):
 
 def load_model(filepath):
     model_params = load(filepath)
-    layers = [{"weights": l["weights"], "biases": l["biases"], "act_fn": l["act_fn"]} for l in model_params["layers"]]
+    layers = [{key: l[key] for key in ("weights", "biases", "act_fn", "dropout") if key in l} for l in model_params["layers"]]
     return FeedForward(layers=layers, configs=model_params["configs"])
 
 
@@ -64,9 +64,14 @@ class FeedForward:
         for observer in self.observers:
             getattr(observer, event)(self, *args)
 
-    def add_layer(self, num_inputs, num_neurons, act_fn):
+    # dropout: the fraction of the inputs of this layer that the training sets to 0 at random, in each step (see
+    # forward_layers). 0.2 or 0.5 are common; 0 (the default) is no dropout.
+    def add_layer(self, num_inputs, num_neurons, act_fn, dropout=0.0):
         if act_fn not in ACTIVATIONS:
             raise ValueError(f"Invalid activation function: {act_fn}. Use one of {list(ACTIVATIONS)}")
+
+        if not 0 <= dropout < 1:
+            raise ValueError(f"dropout must be at least 0 and smaller than 1, got {dropout}")
 
         # The initial weights are random: if they were all equal, every neuron of the layer would compute the same
         # thing and receive the same update forever. Their scale aims to keep the variance of z similar from layer to
@@ -79,15 +84,20 @@ class FeedForward:
         else:
             std_dev = math.sqrt(1 / num_inputs)
 
-        self.layers.append({
+        layer = {
             "weights": np.random.normal(0, std_dev, (num_neurons, num_inputs)),  # one row per neuron
             "biases": np.zeros(num_neurons),
             "act_fn": act_fn,
-        })
+        }
+
+        if dropout > 0:
+            layer["dropout"] = dropout
+
+        self.layers.append(layer)
 
     # loss: the loss function to minimize (see losses.py), or None when the gradient comes from outside the model, as in
     #       PPO (see ppo.py), which then calls forward_layers, backward and update itself
-    # optimizer: how the gradients update the parameters, "sgd" or "adam" (see optimizers.py)
+    # optimizer: how the gradients update the parameters, "sgd", "momentum", "rmsprop" or "adam" (see optimizers.py)
     def configure(self, loss, optimizer="sgd"):
         if loss is not None:
             check_loss(loss)
@@ -124,13 +134,25 @@ class FeedForward:
 
     # Forward pass over inputs that are already normalized. Keeps the inputs, z and output of every layer in
     # self.cache, because backward() needs them to compute the gradients.
-    def forward_layers(self, values):
+    #
+    # training: applies dropout (train_step sets it). Each input of a layer with dropout is set to 0 with probability
+    # dropout, and the others are multiplied by 1 / (1 - dropout), so every input keeps its expected value and the
+    # predictions, which use all the inputs as they are, see the same scale (inverted dropout). A different random half
+    # (with dropout 0.5) of the inputs is missing in every step, so no neuron can rely on any one input being there:
+    # the network has to spread what it learns, which reduces overfitting.
+    def forward_layers(self, values, training=False):
         self.cache = []
 
         for layer in self.layers:
             inputs = values
+            mask = None  # 0 for the dropped inputs, 1 / (1 - dropout) for the others
+
+            if training and layer.get("dropout", 0) > 0:
+                mask = (np.random.random(np.shape(inputs)) >= layer["dropout"]) / (1 - layer["dropout"])
+                inputs = inputs * mask
+
             z, values = layer_forward(inputs, layer["weights"], layer["biases"], layer["act_fn"])
-            self.cache.append({"inputs": inputs, "z": z, "output": values})
+            self.cache.append({"inputs": inputs, "z": z, "output": values, "mask": mask})
 
         self.notify("on_forward")
         return values
@@ -237,7 +259,7 @@ class FeedForward:
     #   5. update: every parameter takes a step of learning_rate against its gradient
     # Returns the loss of the batch (before the update).
     def train_step(self, inputs, targets, learning_rate, l1_lambda=0.0, l2_lambda=0.0):
-        predictions = self.forward_layers(inputs)
+        predictions = self.forward_layers(inputs, training=True)
         loss = loss_fn(self.configs["loss"], targets, predictions)
         output_delta = self.output_delta(targets, predictions)
         gradients = self.backward(output_delta, l1_lambda, l2_lambda)
@@ -296,6 +318,11 @@ class FeedForward:
             if i > 0:
                 previous = self.cache[i - 1]
                 grad_inputs = np.dot(delta, layer["weights"])
+
+                # A dropped input didn't reach the layer, so it gets no gradient; the others get the same scale
+                if self.cache[i].get("mask") is not None:
+                    grad_inputs = grad_inputs * self.cache[i]["mask"]
+
                 delta = np.atleast_2d(activation_backward(self.layers[i - 1]["act_fn"], previous["z"], previous["output"], grad_inputs))
 
         return gradients
@@ -324,6 +351,8 @@ class FeedForward:
             print(f"    Number of Neurons: {num_neurons}")
             print(f"    Input Dimension: {num_inputs}")
             print(f"    Number of Parameters: {layer_params}")
+            if layer.get("dropout"):
+                print(f"    Dropout of the inputs: {layer['dropout']}")
             print("--------------")
 
         print(f"Total Parameters: {total_params}")

@@ -14,6 +14,47 @@ class SGD:
             layer["biases"] -= learning_rate * grad_biases
 
 
+# Momentum: each parameter keeps a velocity, the running sum of its gradients with the older ones fading by beta in
+# every update, and moves by -learning_rate * velocity. Like a ball rolling downhill, it keeps going in the directions
+# where the gradients agree from step to step, and gradients that change sign (zigzagging across a narrow valley)
+# cancel out. With beta 0.9, a gradient that stays the same ends up moving the parameter 10 times as far as with SGD.
+class Momentum:
+    def __init__(self, beta=0.9):
+        self.beta = beta  # how much of the previous velocity each update keeps
+        self.velocity = None
+
+    def update(self, layers, gradients, learning_rate):
+        if self.velocity is None:
+            self.velocity = [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+
+        for layer, velocity, layer_gradients in zip(layers, self.velocity, gradients):
+            for key, grad in zip(("weights", "biases"), layer_gradients):
+                velocity[key] *= self.beta  # velocity = beta * velocity + grad
+                velocity[key] += grad
+                layer[key] -= learning_rate * velocity[key]
+
+
+# RMSprop: each parameter keeps the running mean of its squared gradients (with rho, how much of it each update keeps),
+# and moves by -learning_rate * gradient / sqrt(that mean). Dividing by the usual size of its gradients gives every
+# parameter a step of about learning_rate: parameters with small gradients still learn, and those with large ones
+# don't jump too far. It is the second half of Adam, without the momentum.
+class RMSprop:
+    def __init__(self, rho=0.9, epsilon=1e-8):
+        self.rho = rho
+        self.epsilon = epsilon  # avoids a division by 0
+        self.mean_square = None
+
+    def update(self, layers, gradients, learning_rate):
+        if self.mean_square is None:
+            self.mean_square = [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+
+        for layer, mean_square, layer_gradients in zip(layers, self.mean_square, gradients):
+            for key, grad in zip(("weights", "biases"), layer_gradients):
+                mean_square[key] *= self.rho  # mean_square = rho * mean_square + (1 - rho) * grad^2
+                mean_square[key] += (1 - self.rho) * grad * grad
+                layer[key] -= learning_rate * grad / (np.sqrt(mean_square[key]) + self.epsilon)
+
+
 # Adam (adaptive moment estimation) keeps two running averages for every parameter:
 #   m: the mean of its recent gradients (momentum: steps keep their direction when the gradients agree, and noisy
 #      gradients that change sign cancel out)
@@ -60,7 +101,7 @@ class Adam:
                 layer[key] -= step_size * m[key] / (np.sqrt(v[key]) + epsilon)
 
 
-OPTIMIZERS = {"sgd": SGD, "adam": Adam}
+OPTIMIZERS = {"sgd": SGD, "momentum": Momentum, "rmsprop": RMSprop, "adam": Adam}
 
 
 def make_optimizer(name):

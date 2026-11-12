@@ -31,7 +31,7 @@ here).
    - `feedforward.py`: the `FeedForward` model. Start with `train_step`, which calls the five steps of a training step.
    - `activations.py`: ReLU, sigmoid, tanh, linear and softmax, and their derivatives.
    - `losses.py`: mean squared error and cross-entropy (categorical and binary), and their derivatives.
-   - `optimizers.py`: plain gradient descent (SGD) and Adam.
+   - `optimizers.py`: plain gradient descent (SGD), momentum, RMSprop and Adam.
    - `data.py`: one-hot encoding, normalization, batches and seeds.
 3. **The examples**, from the simplest (below).
 4. **Reinforcement learning**:
@@ -85,6 +85,8 @@ The training of 10 epochs stops near the best moment: after it, the validation l
 keeps falling (overfitting). `python train-mnist.py --epochs 30 --patience 3` finds that moment by itself (early
 stopping): it stops when the validation loss hasn't improved for 3 epochs and goes back to the best epoch. Over 5
 seeds it stopped after 8 to 12 epochs and scored the same 97.8% as the 10 fixed epochs, which were chosen by hand.
+`python train-mnist.py --epochs 20 --dropout 0.2` (dropout, see FEEDFORWARD.md) scored 98.0% over 5 seeds, every
+one of them better than every seed of the default.
 
 ### 4. Reinforcement learning: CartPole, Acrobot and LunarLander
 
@@ -134,6 +136,37 @@ environments that can be shown, `--render` to watch the training (much slower) o
 ```sh
 python train-cartpole.py --seed 0 --episodes 300
 python train-acrobot-ppo.py --render
+```
+
+### 5. Decision boundaries: two spirals
+
+Two spirals wind around each other, one per class, and two models learn to tell them apart: one without hidden
+layers, whose boundary can only be a straight line (62% to 67% right over 5 seeds), and one with two hidden layers of
+16 neurons, which bends its boundary to follow the arms (99.1% to 99.8%). `spirals.png` shows both boundaries, and the network's one
+taking shape along the training. It also shows binary cross-entropy, with one sigmoid output.
+
+```sh
+python train-spirals.py   # about 3 seconds: saves spirals.png
+```
+
+### 6. An autoencoder
+
+A network learns to rebuild MNIST digits through a layer of only 2 numbers. It never sees the labels, yet the 2
+numbers of each digit gather by digit, and `autoencoder.png` shows them as points, with the reconstructions and what
+the second half of the network draws for each point of the plane.
+
+```sh
+python train-autoencoder.py   # about 1 minute: saves autoencoder.png
+```
+
+### 7. Comparing optimizers
+
+SGD, momentum, RMSprop and Adam train the same network over a range of learning rates (see "Optimizers" in
+FEEDFORWARD.md for the results). `optimizers.png` shows the loss for each learning rate, and the training of each
+optimizer with its best one.
+
+```sh
+python compare-optimizers.py   # about 40 seconds: saves optimizers.png
 ```
 
 ## Watching a model live

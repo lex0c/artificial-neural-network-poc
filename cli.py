@@ -26,10 +26,19 @@ def positive_int(text):
     return value
 
 
+# An argparse type for a fraction of the inputs to drop: at least 0 and smaller than 1
+def dropout_rate(text):
+    value = float(text)
+    if not 0 <= value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 0 and smaller than 1, got {value}")
+    return value
+
+
 # The options of the training scripts: --seed, --render (for the environments that can be shown), --watch (for the
-# scripts that use viewer.py), --patience (for the ones with validation data) and the length of the training (e.g.
-# episodes=500 adds --episodes, 500 by default). Every script also has --help.
-def training_args(description, render=False, watch=False, patience=False, **length):
+# scripts that use viewer.py), --patience (for the ones with validation data), --dropout, the length of the training
+# (e.g. episodes=500 adds --episodes, 500 by default) and --dashboard (unless dashboard=False). Every script also has
+# --help.
+def training_args(description, render=False, watch=False, patience=False, dropout=False, dashboard=True, **length):
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--seed", type=int, default=None,
                         help="seed of the random numbers, to make the run reproducible (default: a different run each time)")
@@ -46,10 +55,16 @@ def training_args(description, render=False, watch=False, patience=False, **leng
                             help="early stopping: stop when the validation loss hasn't improved for this many epochs, "
                                  "and keep the weights of the best epoch (default: train all the epochs)")
 
+    if dropout:
+        parser.add_argument("--dropout", type=dropout_rate, default=0.0,
+                            help="fraction of the inputs of the output layer to drop in each training step (default: 0)")
+
     for name, default in length.items():
         parser.add_argument(f"--{name}", type=positive_int, default=default, help=f"number of {name} (default: {default})")
 
-    add_dashboard_option(parser)
+    if dashboard:
+        add_dashboard_option(parser)
+
     return parser.parse_args()
 
 

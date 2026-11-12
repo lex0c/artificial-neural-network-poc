@@ -159,6 +159,13 @@ The optimizer is the last step of `train_step`: it decides how the gradients cha
 
 - **SGD** (the default): `parameter = parameter - learning_rate * gradient`. The step is proportional to the gradient,
   so parameters with small gradients learn slowly, and one learning rate has to suit all of them.
+- **Momentum**: each parameter keeps a velocity, `velocity = 0.9 * velocity + gradient`, and moves by
+  `-learning_rate * velocity`. It keeps going where the gradients agree from step to step, and gradients that change
+  sign cancel out. A gradient that stays the same ends up moving the parameter 10 times as far as with SGD
+  (`1 / (1 - 0.9)`), so momentum needs a learning rate about 10 times smaller.
+- **RMSprop**: each parameter keeps the running mean of its squared gradients,
+  `mean_square = 0.9 * mean_square + 0.1 * gradient^2`, and moves by `-learning_rate * gradient / sqrt(mean_square)`:
+  a step of about `learning_rate`, whatever the scale of its gradients.
 - **Adam**: keeps, for each parameter, a running mean of its gradients (`m`, a momentum: steps keep their direction when
   the gradients agree) and of its squared gradients (`v`, how large its gradients usually are), and moves it by
   `learning_rate * m / sqrt(v)`. Dividing by `sqrt(v)` gives every parameter a step of about `learning_rate`, whatever
@@ -186,7 +193,13 @@ On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
 | SGD, `learning_rate=0.001` | 58.6% | 81.2% | 89.8% | 87.3% |
 
 Adam learns more per epoch and doesn't need a learning rate tuned to the scale of the gradients: with Adam's
-`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though: the training took about 1.7 times as long (15 s against 9 s).
+`0.001`, SGD learns much more slowly (89.8% after 10 epochs).
+
+`compare-optimizers.py` trains the same network with the four optimizers over a range of learning rates, on 10,000
+MNIST images for 8 epochs, and plots `optimizers.png`. The best learning rate was 0.3 for SGD, 0.1 for momentum and
+0.003 for RMSprop and Adam: they differ by 100 times, so comparing optimizers with the same learning rate says little.
+With its best learning rate, every optimizer ended between 0.16 and 0.19 of validation loss, so a tuned SGD comes
+close; momentum and Adam got there fastest, with 0.25 after the first epoch against 0.48 for SGD. Each Adam update does more work, though: the training took about 1.7 times as long (15 s against 9 s).
 
 ### Weight initialization
 
@@ -230,6 +243,23 @@ classifier.add_layer(num_inputs=3, num_neurons=16, act_fn='relu')
 classifier.add_layer(num_inputs=16, num_neurons=4, act_fn='softmax')
 classifier.configure(loss='categorical_crossentropy')
 ```
+
+`dropout` is a regularization of the inputs of a layer: `add_layer(..., dropout=0.2)` sets 20% of them to 0 at
+random in every training step, and multiplies the others by `1 / (1 - 0.2)` so their expected value doesn't change.
+A different random part of the inputs is missing in every step, so no neuron can rely on any one of them, and the
+network has to spread what it learns, which reduces overfitting. Predictions use every input. On MNIST, with dropout
+on the inputs of the output layer (`train-mnist.py --dropout`, 5 seeds):
+
+| | Test accuracy | Test loss |
+| --- | --- | --- |
+| No dropout, 10 epochs (the default) | 97.78% (97.68 to 97.88) | 0.075 |
+| No dropout, 20 epochs | 97.86% | 0.092 |
+| Dropout 0.2, 20 epochs | 98.03% (97.95 to 98.14) | 0.075 |
+| Dropout 0.5, 20 epochs | 97.77% | 0.080 |
+
+Without dropout, 10 more epochs barely change the accuracy and the test loss rises: the model overfits. With dropout
+0.2, every seed did better than every seed of the default, and the lowest validation loss came later (epochs 9 to 14
+instead of 5 to 9). Dropout 0.5 removes too much for a layer of 128 inputs: the training loss stays high.
 
 ### Normalize the inputs
 
