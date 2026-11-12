@@ -64,15 +64,18 @@ class TanhRNN:
 # hold a value across many events (z close to 1), and a reset gate r how much of it the candidate reads.
 #   z = sigmoid(W_z concat(x, h) + b_z),  r = sigmoid(W_r concat(x, h) + b_r)
 #   n = tanh(W_n concat(x, r * h) + b_n),  h_t = (1 - z) n + z h
+# update_bias is the starting value of b_z. With 0, z starts around 0.5 and the gradient of an old state halves at every
+# event; a positive one, e.g. 2 (z around 0.88), makes the GRU keep its state by default, a common initialization for
+# long memories.
 class GRU:
     names = ("W_z", "b_z", "W_r", "b_r", "W_n", "b_n", "W_y", "b_y")
 
-    def __init__(self, input_dim, hidden_dim, num_classes, seed=0, dtype="float32"):
+    def __init__(self, input_dim, hidden_dim, num_classes, seed=0, dtype="float32", update_bias=0.0):
         rng, fan_in = np.random.default_rng(seed), input_dim + hidden_dim
         self.params = {}
         for gate in ("z", "r", "n"):
             self.params[f"W_{gate}"] = init(rng, (hidden_dim, fan_in), fan_in, dtype)
-            self.params[f"b_{gate}"] = np.zeros(hidden_dim, dtype)
+            self.params[f"b_{gate}"] = np.full(hidden_dim, update_bias if gate == "z" else 0.0, dtype)
         self.params["W_y"] = init(rng, (num_classes, fan_in), fan_in, dtype)
         self.params["b_y"] = np.zeros(num_classes, dtype)
         self.d, self.dtype = input_dim, np.dtype(dtype)

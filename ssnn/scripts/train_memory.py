@@ -27,7 +27,7 @@ from ssnn.training import evaluate_sequences, train_sequences
 #                       "dense", ssnn/gradients.py)
 #   rnn                 a dense tanh RNN with 32 neurons, as much work per event as one expert
 #   gru                 gated recurrent units, 32 neurons, the same with as much work per event as the learned SSNN,
-#                       and 64 neurons
+#                       and 64 neurons, with the update gate's starting bias of --gru-update-bias (ssnn/recurrent.py)
 # Every model trains on the same sequences with the same epochs, minibatches and learning rate (each of
 # --learning-rates, from the start), and keeps its epoch with the lowest validation loss. One row per model, learning
 # rate and seed goes to ssnn/reports/memory.csv.
@@ -46,6 +46,8 @@ parser.add_argument("--epochs", type=positive_int, default=20, help="epochs of e
 parser.add_argument("--learning-rates", type=float, nargs="+", default=[0.003],
                     help="learning rates to train every model with, each from the start (default: 0.003)")
 parser.add_argument("--max-distance", type=positive_int, default=30, help="largest distance of the training sequences (default: 30)")
+parser.add_argument("--gru-update-bias", type=float, default=0.0,
+                    help="starting bias of the update gate of the GRUs; 2 makes them keep their state by default (default: 0)")
 parser.add_argument("--models", nargs="+", choices=MODEL_KEYS, default=list(MODEL_KEYS), help="models to train (default: all)")
 parser.add_argument("--report", default=os.path.join(REPORTS, "memory.csv"), help="CSV file the results are added to")
 args = parser.parse_args()
@@ -70,14 +72,16 @@ def models(seed):
     gated_unbalanced = ssnn(seed, num_experts=args.experts, top_k=2, write="gated", balance_weight=0.0)
     dense = ssnn(seed, num_experts=args.experts, top_k=2, write="gated", router_gradient="dense")
     same_work = gru_hidden_for(learned[0].touched, task.input_dim, NUM_CLASSES)
+    bias = args.gru_update_bias
     all_models = {
         "oracle": ("ssnn, oracle routing", *oracle), "learned": ("ssnn, learned router", *learned),
         "gated": ("ssnn, gated write", *gated), "gated-unbalanced": ("ssnn, gated, no balance", *gated_unbalanced),
         "dense": ("ssnn, gated, dense router gradient", *dense),
         "rnn": ("rnn (32)", TanhRNN(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
-        "gru": ("gru (32)", GRU(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
-        "gru-same-work": (f"gru ({same_work}), same work", GRU(task.input_dim, same_work, NUM_CLASSES, seed=seed), None),
-        "gru-64": ("gru (64)", GRU(task.input_dim, 64, NUM_CLASSES, seed=seed), None),
+        "gru": ("gru (32)", GRU(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed, update_bias=bias), None),
+        "gru-same-work": (f"gru ({same_work}), same work", GRU(task.input_dim, same_work, NUM_CLASSES, seed=seed,
+                                                                 update_bias=bias), None),
+        "gru-64": ("gru (64)", GRU(task.input_dim, 64, NUM_CLASSES, seed=seed, update_bias=bias), None),
     }
     return [all_models[key] for key in MODEL_KEYS if key in args.models]
 
@@ -93,7 +97,9 @@ for seed in args.seeds:
 
     for learning_rate in args.learning_rates:
         for name, model, config in models(seed):  # new models for each learning rate
-            label = name if len(args.learning_rates) == 1 else f"{name}, lr {learning_rate}"
+            is_gru = isinstance(model, GRU)
+            label = name + (f", bias {args.gru_update_bias:g}" if is_gru and args.gru_update_bias else "")
+            label += "" if len(args.learning_rates) == 1 else f", lr {learning_rate}"
             start = time.time()
             history = train_sequences(model, train, val, epochs=args.epochs, learning_rate=learning_rate, seed=seed,
                                       balance_weight=config["balance_weight"] if config else 0.0)
@@ -116,7 +122,7 @@ for seed in args.seeds:
                 "date": datetime.now().isoformat(timespec="seconds"), "experiment": "B", "registers": args.registers,
                 "values": args.values, "noise": args.noise, "seed": seed, "config": config_hash(config) if config else "",
                 "model": name, "touched_per_event": model.touched, "epochs": args.epochs, "learning_rate": learning_rate,
-                "max_distance": args.max_distance,
+                "max_distance": args.max_distance, "gru_update_bias": args.gru_update_bias if is_gru else "",
                 "best_epoch": history["best_epoch"], "val_loss": min(history["val_loss"]),
                 "val_accuracy": max(history["val_accuracy"]),
                 **{f"accuracy_{low}_{high}": value for (low, high), value in accuracies.items()},

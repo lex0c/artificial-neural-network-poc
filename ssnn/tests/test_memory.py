@@ -144,6 +144,11 @@ class SequenceGradientTest(unittest.TestCase):
     def test_gru(self):
         self.check(GRU(input_dim=4, hidden_dim=5, num_classes=2, seed=1, dtype="float64"), label=1)
 
+    def test_gru_that_keeps_its_state_by_default(self):
+        model = GRU(input_dim=4, hidden_dim=5, num_classes=2, seed=1, dtype="float64", update_bias=2.0)
+        self.assertTrue(np.all(model.params["b_z"] == 2) and not np.any(model.params["b_r"]))
+        self.check(model, label=1)
+
 
 # The loss of a sequence if expert were added to the selection of event step with the given weight, the weights of the
 # selected experts scaled by 1 - weight: a forward pass of its own (gated write), from the given state or the zero one
