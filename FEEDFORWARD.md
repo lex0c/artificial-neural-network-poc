@@ -261,6 +261,8 @@ on the inputs of the output layer (`train-mnist.py --dropout`, 5 seeds):
 Without dropout, 10 more epochs barely change the accuracy and the test loss rises: the model overfits. With dropout
 0.2, every seed did better than every seed of the default, and the lowest validation loss came later (epochs 9 to 14
 instead of 5 to 9). Dropout 0.5 removes too much for a layer of 128 inputs: the training loss stays high.
+`train-breast-cancer.py` and `compare-regularization.py` compare dropout with early stopping and L2 on small datasets,
+where overfitting is stronger (see "Overfitting and regularization" in the README).
 
 ### Normalize the inputs
 

@@ -169,6 +169,46 @@ optimizer with its best one.
 python compare-optimizers.py   # about 40 seconds: saves optimizers.png
 ```
 
+### 8. Overfitting and regularization
+
+With few samples, a network learns them too well: it memorizes their noise, and does worse on new data than on the
+data it learned (overfitting). Two examples show it, and what early stopping, dropout and L2 do about it, each over
+20 seeds.
+
+`train-breast-cancer.py` asks a real yes/no question: is a breast tumor malignant? The 569 tumors of the breast
+cancer dataset of scikit-learn (no download) have 30 measurements each, and the same network trains in three ways.
+Without regularization the validation loss rises again after about 100 epochs, while the training loss keeps
+falling; `breast-cancer.png` shows the curves.
+
+| | Test accuracy | Test loss |
+| --- | --- | --- |
+| No regularization, 500 epochs | 96.5% | 0.156 |
+| Early stopping (patience 20), stopping after about 170 epochs | 97.0% | 0.093 |
+| Dropout 0.5, 500 epochs | 97.0% | 0.130 |
+
+The overfitting shows more in the loss than in the accuracy: the longer the training, the surer the model is of its
+wrong answers.
+
+`compare-regularization.py` trains a large network on only 100 noisy points of each spiral, and `regularization.png`
+draws each boundary: without regularization it bends around every point, even those the noise pushed into the other
+spiral.
+
+| | Right on the training points | Right on new points |
+| --- | --- | --- |
+| No regularization | 99.0% | 87.0% |
+| L2 0.0003 | 97.2% | 88.1% |
+| Dropout 0.2 | 95.9% | 88.3% |
+| Early stopping (patience 50) | 94.2% | 87.9% |
+| Too much: L2 0.003 | 72.1% | 68.8% |
+
+Each one narrows the gap between the two columns, but the last line shows the other side: too much regularization
+keeps the network from following the spirals at all (underfitting).
+
+```sh
+python train-breast-cancer.py      # about 6 seconds: saves breast-cancer.png
+python compare-regularization.py   # about 15 seconds: saves regularization.png
+```
+
 ## Watching a model live
 
 Every `train` and `run` script takes `--dashboard`, which opens a page at http://localhost:8000 (or the next free
