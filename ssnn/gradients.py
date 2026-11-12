@@ -1,7 +1,7 @@
 import numpy as np
 
 from activations import softmax
-from ssnn.model import PARAMETER_NAMES
+from ssnn.model import PARAMETER_NAMES, write_strength
 
 
 # Gradients of one event, written by hand and checked numerically in the tests. The
@@ -39,16 +39,19 @@ def add_task_gradients(model, trace, label, grads):
     d_g = params["W_y"][:, d:].T @ delta
     d_v = beta * d_g
 
-    # Experts: v = sum of a_j h_j, h_j = (1 - rho) h_prev_j + rho tanh(u_j), u_j = W_x x + W_h h_prev_j + b
+    # Experts: v = sum of a_j h_j, h_j = (1 - s_j) h_prev_j + s_j tanh(u_j), u_j = W_x x + W_h h_prev_j + b, where the
+    # write strength s_j is rho, or rho a_j with the gated write (then a_j also changes how much h_j moves)
     selected, weights = trace["selected"], trace["weights"]
-    d_weights = trace["h_selected"] @ d_v  # dL/da_j = d_v . h_j
+    d_weights = trace["h_selected"] @ d_v  # dL/da_j = d_v . h_j, through the read
 
     for j, i in enumerate(selected):
         d_h = weights[j] * d_v
-        d_u = rho * (1 - trace["n"][j] ** 2) * d_h
+        d_u = write_strength(config, weights[j]) * (1 - trace["n"][j] ** 2) * d_h
         grads["W_x"][i] += np.outer(d_u, trace["x"])
         grads["W_h"][i] += np.outer(d_u, trace["h_prev"][j])
         grads["b"][i] += d_u
+        if config["write"] == "gated":
+            d_weights[j] += rho * d_h @ (trace["n"][j] - trace["h_prev"][j])  # through the write
 
     # Router: a = softmax(z[S] / tau), so dL/dz_j = (a_j / tau) (dL/da_j - sum of a dL/da) for the selected experts,
     # and 0 for the others (the top-k choice itself isn't differentiable). With k = 1, a = [1] and the gradient is 0.
@@ -58,6 +61,62 @@ def add_task_gradients(model, trace, label, grads):
         grads["b_r"][selected] += d_z
 
     return loss
+
+
+# Backpropagation through time over a sequence of events of one session, with the loss on the last event only (the
+# answer of a memory task): -log p_T[label]. traces are the traces of model.step for each event, in order, from the zero
+# state. Returns the loss and its gradient with respect to every parameter.
+#
+# Going backwards, dh (one row per expert) and dg hold the gradient of the loss with respect to the states after the
+# current event. At each event, only the selected experts compute something: an expert that didn't run kept its state
+# unchanged (an identity), so its row of dh passes to the previous event as it is. The gradient of a state that waited
+# many events between two uses therefore doesn't fade with the length of the wait, unlike in a dense recurrent network,
+# which transforms its whole state at every event.
+def sequence_gradients(model, traces, label):
+    params, config = model.params, model.config
+    d = config["input_dim"]
+    rho, beta, tau = config["rho"], config["beta"], config["routing_temperature"]
+    grads = {name: np.zeros_like(params[name]) for name in PARAMETER_NAMES}
+
+    last = traces[-1]
+    loss = -np.log(max(float(last["probabilities"][label]), 1e-12))
+    delta = last["probabilities"].copy()
+    delta[label] -= 1
+    grads["W_y"] += np.outer(delta, last["decoder_input"])
+    grads["b_y"] += delta
+
+    dg = params["W_y"][:, d:].T @ delta  # dL/dg_T
+    dh = np.zeros((config["num_experts"], config["state_dim"]), model.dtype)  # dL/dh_T: no loss on h directly
+
+    for trace in reversed(traces):
+        selected, weights = trace["selected"], trace["weights"]
+
+        # g_t = (1 - beta) g_(t-1) + beta v_t, v_t = sum of a_j h_(t, j)
+        d_v = beta * dg
+        dg_prev = (1 - beta) * dg
+        d_weights = trace["h_selected"] @ d_v
+
+        for j, i in enumerate(selected):
+            strength = write_strength(config, weights[j])
+            d_h = dh[i] + weights[j] * d_v  # from the following events, and from v_t
+            d_u = strength * d_h * (1 - trace["n"][j] ** 2)
+            grads["W_x"][i] += np.outer(d_u, trace["x"])
+            grads["W_h"][i] += np.outer(d_u, trace["h_prev"][j])
+            grads["b"][i] += d_u
+            if config["write"] == "gated":
+                d_weights[j] += rho * d_h @ (trace["n"][j] - trace["h_prev"][j])  # through the write
+            dh[i] = (1 - strength) * d_h + params["W_h"][i].T @ d_u  # dL/dh_(t-1, i)
+
+        # The router read q = concat(x_t, g_(t-1)): its gradient reaches the global state of the previous event too
+        if config["router"] == "learned":
+            d_z = (weights / tau) * (d_weights - weights @ d_weights)
+            grads["W_r"][selected] += np.outer(d_z, trace["q"])
+            grads["b_r"][selected] += d_z
+            dg_prev += (params["W_r"][selected].T @ d_z)[d:]
+
+        dg = dg_prev
+
+    return loss, grads
 
 
 # Balance loss of a minibatch: L_bal = E * sum over the experts of (mean_pi_i - 1 / E)^2, where pi is the

@@ -40,3 +40,19 @@ def routing_summary(selected, num_experts, groups=None):
         summary["group_information"] = max(0.0, information)  # never below 0, which rounding could give
 
     return summary
+
+
+# How often the gaps of a memory task disturbed the memory, from the traces of an SSNN over each sequence: the share
+# of the NOOP events after the last write that selected one of the experts the final QUERY reads. Those events
+# overwrite part of the state the answer depends on; with a right routing (an oracle) it is 0.
+def memory_leak(traces_by_sequence, inputs_by_sequence, distances, noop_index):
+    touched, noops = 0, 0
+
+    for traces, inputs, distance in zip(traces_by_sequence, inputs_by_sequence, distances):
+        read = set(np.asarray(traces[-1]["selected"]).tolist())
+        for trace, x in zip(traces[-distance:-1], inputs[-distance:-1]):  # the events between the last write and the QUERY
+            if x[noop_index] == 1:
+                noops += 1
+                touched += bool(read & set(np.asarray(trace["selected"]).tolist()))
+
+    return touched / noops if noops else 0.0

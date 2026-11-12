@@ -34,8 +34,14 @@ class EnginesTest(unittest.TestCase):
                 self.assert_same_session(model, SelectiveEngine(model))
 
     def test_all_experts_engine_matches_the_model_with_k_equal_to_e(self):
-        model = SSNN(make_config(input_dim=6, top_k=16))
-        self.assert_same_session(model, AllExpertsEngine(model))
+        for write in ("fixed", "gated"):
+            with self.subTest(write=write):
+                model = SSNN(make_config(input_dim=6, top_k=16, write=write))
+                self.assert_same_session(model, AllExpertsEngine(model))
+
+    def test_selective_engine_with_the_gated_write(self):
+        model = SSNN(make_config(input_dim=6, top_k=3, write="gated"))
+        self.assert_same_session(model, SelectiveEngine(model))
 
     def test_profile_marks_the_five_parts(self):
         model = SSNN(make_config())

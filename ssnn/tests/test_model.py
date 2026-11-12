@@ -169,6 +169,10 @@ class GradientTest(unittest.TestCase):
     def test_one_event_matches_numerical_gradients(self):
         self.check({"num_experts": 5, "top_k": 2, "state_dim": 4, "input_dim": 3, "num_classes": 3})
 
+    def test_with_the_gated_write(self):
+        # The weights of the router also set how much each expert writes, so they get a gradient through the write too
+        self.check({"num_experts": 5, "top_k": 3, "state_dim": 4, "input_dim": 3, "write": "gated"})
+
     def test_with_a_temperature_and_all_experts(self):
         self.check({"num_experts": 4, "top_k": 4, "state_dim": 3, "input_dim": 2, "routing_temperature": 0.5})
 

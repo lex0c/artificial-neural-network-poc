@@ -91,3 +91,76 @@ def train(model, train_set, val_set, verbose=False):
         model.params.update(best_params)
     history["best_epoch"] = best_epoch
     return history
+
+
+# Training on sequences (experiment B), for any model of ssnn/recurrent.py: each example is (inputs, label, distance),
+# a sequence from the zero state with its answer on the last event. One minibatch of sequences: forward over each,
+# backpropagation through time, the mean of the gradients, the balance loss of the router over all the events of the
+# minibatch (for an SSNN with a learned router; through the logits only, not through the global state they read),
+# clipping by global norm and one step of Adam. Like train, it ends with the parameters of the epoch with the lowest
+# validation loss.
+def train_sequences(model, train_set, val_set, epochs, learning_rate, batch_size=32, clip_grad_norm=1.0, seed=0,
+                    balance_weight=0.0, verbose=False):
+    optimizer = make_optimizer("adam")
+    order_rng = np.random.default_rng([seed, 3])
+    history = {"loss": [], "val_loss": [], "val_accuracy": []}
+    best_val_loss, best_params, best_epoch = np.inf, None, 0
+    start_time = time.time()
+
+    for epoch in range(1, epochs + 1):
+        order = order_rng.permutation(len(train_set))
+        epoch_loss = 0.0
+
+        for start in range(0, len(order), batch_size):
+            batch = order[start:start + batch_size]
+            grads = {name: np.zeros_like(model.params[name]) for name in model.names}
+            router_events = []
+
+            for index in batch:
+                inputs, label, _ = train_set[index]
+                _, cache = model.forward(inputs)
+                loss, sequence_grads = model.gradients(cache, label)
+                epoch_loss += loss
+                for name in model.names:
+                    grads[name] += sequence_grads[name]
+                if balance_weight > 0 and getattr(model, "router_events", None):
+                    router_events.append(model.router_events(cache))
+
+            for name in model.names:
+                grads[name] /= len(batch)
+
+            if router_events and router_events[0] is not None:
+                logits = np.concatenate([events[0] for events in router_events])
+                inputs = np.concatenate([events[1] for events in router_events])
+                for name, grad in balance_gradients(logits, inputs)[1].items():
+                    grads[name] += balance_weight * grad
+            clip_global_norm(grads, clip_grad_norm)
+            optimizer.update([model.params[name] for name in model.names], [grads[name] for name in model.names], learning_rate)
+
+        val_loss, val_accuracy = evaluate_sequences(model, val_set)
+        history["loss"].append(epoch_loss / len(train_set))
+        history["val_loss"].append(val_loss)
+        history["val_accuracy"].append(val_accuracy)
+
+        if val_loss < best_val_loss:
+            best_val_loss, best_epoch = val_loss, epoch
+            best_params = {name: array.copy() for name, array in model.params.items()}
+
+        if verbose:
+            print(f"  epoch {epoch}/{epochs} - loss {format_number(history['loss'][-1])} - val_loss "
+                  f"{format_number(val_loss)} - val_accuracy {val_accuracy:.4f} - {format_duration(time.time() - start_time)}")
+
+    for name, array in best_params.items():
+        model.params[name][...] = array  # in place: the model's views of its parameters stay valid
+    history["best_epoch"] = best_epoch
+    return history
+
+
+# The mean loss and the accuracy of the answers of the sequences
+def evaluate_sequences(model, examples):
+    losses, correct = [], 0
+    for inputs, label, _ in examples:
+        probabilities, _ = model.forward(inputs)
+        losses.append(-np.log(max(float(probabilities[label]), 1e-12)))
+        correct += int(np.argmax(probabilities) == label)
+    return float(np.mean(losses)), correct / len(examples)

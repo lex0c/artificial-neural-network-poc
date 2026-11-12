@@ -67,3 +67,76 @@ def experiment_capacity(seed, num_regimes, per_regime=(400, 100, 100)):
     teachers = Teachers(num_regimes, seed=seed)
     generators = [np.random.default_rng(s) for s in np.random.SeedSequence([seed, num_regimes]).spawn(3)]
     return [capacity_examples(size * num_regimes, teachers, rng) for size, rng in zip(per_regime, generators)]
+
+
+# Experiment B: memory. A set of hidden registers of one bit each. A sequence first writes every register, then the
+# register it will ask for once more, then has a gap of NOOP events, with a rewrite of another register now and then,
+# and ends with a QUERY of that register, whose answer is the last value written to it. The NOOPs carry noise features
+# that don't matter, which a dense recurrent network still has to keep out of its state. The distance is the number of
+# events from the last write of the queried register to the QUERY.
+#
+# The inputs: one-hot over the commands, SET(i, 0) and SET(i, 1) for each register, QUERY(i) and NOOP, followed by the
+# noise features (non-zero only on the NOOPs). With 1 register and no noise, it is a single bit to remember.
+class MemoryTask:
+    def __init__(self, registers=8, noise=8, rewrite_rate=0.1):
+        self.registers, self.noise, self.rewrite_rate = registers, noise, rewrite_rate
+        self.input_dim = 3 * registers + 1 + noise
+        self.noop_index = 3 * registers
+
+    def set_event(self, register, value):
+        x = np.zeros(self.input_dim, np.float32)
+        x[2 * register + value] = 1
+        return x
+
+    def query_event(self, register):
+        x = np.zeros(self.input_dim, np.float32)
+        x[2 * self.registers + register] = 1
+        return x
+
+    def noop_event(self, rng):
+        x = np.zeros(self.input_dim, np.float32)
+        x[self.noop_index] = 1
+        x[self.noop_index + 1:] = rng.normal(0, 1, self.noise)
+        return x
+
+    def sequence(self, rng, distance):
+        values = rng.integers(0, 2, self.registers)
+        events = [self.set_event(i, values[i]) for i in rng.permutation(self.registers)]
+        target = int(rng.integers(0, self.registers))
+        events.append(self.set_event(target, values[target]))  # its last write, distance events before the QUERY
+        others = [i for i in range(self.registers) if i != target]
+
+        for _ in range(distance - 1):
+            if others and rng.random() < self.rewrite_rate:
+                other = int(rng.choice(others))
+                values[other] = rng.integers(0, 2)
+                events.append(self.set_event(other, values[other]))
+            else:
+                events.append(self.noop_event(rng))
+
+        events.append(self.query_event(target))
+        return np.array(events), int(values[target]), distance
+
+    # num sequences whose distance is drawn uniformly between low and high (included): (inputs, label, distance) each
+    def examples(self, num_sequences, distances, rng):
+        return [self.sequence(rng, int(distance)) for distance in rng.integers(distances[0], distances[1] + 1, num_sequences)]
+
+    # The routing an oracle would choose, for a fixed router with k = 1: expert i for the writes and the QUERY of
+    # register i, and one more expert for the NOOPs (whatever their largest feature)
+    def oracle_routes(self):
+        return ([[i // 2] for i in range(2 * self.registers)] + [[i] for i in range(self.registers)]
+                + [[self.registers]] * (1 + self.noise))
+
+
+# Training and validation with distances up to 30; tests with distances up to 30 and beyond, which the training never
+# saw: 31 to 100 and 101 to 200
+MEMORY_TEST_DISTANCES = ((1, 10), (11, 30), (31, 100), (101, 200))
+
+
+def experiment_memory(seed, task, sizes=(2000, 500), test_size=300, max_distance=30):
+    generators = [np.random.default_rng(s) for s in np.random.SeedSequence([seed, 2]).spawn(2 + len(MEMORY_TEST_DISTANCES))]
+    train = task.examples(sizes[0], (1, max_distance), generators[0])
+    val = task.examples(sizes[1], (1, max_distance), generators[1])
+    tests = {distances: task.examples(test_size, distances, rng)
+             for distances, rng in zip(MEMORY_TEST_DISTANCES, generators[2:])}
+    return train, val, tests

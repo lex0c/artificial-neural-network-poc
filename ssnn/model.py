@@ -9,8 +9,8 @@ from ssnn.config import validate
 # The SSNN, version 0. For each event x_t:
 #
 #   router      q = concat(x_t, g_(t-1));  z = W_r q + b_r;  S = the k largest z;  a = softmax(z[S] / tau)
-#   experts     for i in S:  u_i = W_x[i] x_t + W_h[i] h_i + b[i];  n_i = tanh(u_i);  h_i = (1 - rho) h_i + rho n_i
-#               the other experts keep their state unchanged
+#   experts     for i in S:  u_i = W_x[i] x_t + W_h[i] h_i + b[i];  n_i = tanh(u_i);  h_i = (1 - s_i) h_i + s_i n_i
+#               with s_i = rho (write "fixed") or rho a_i (write "gated"); the other experts keep their state unchanged
 #   integrator  v = sum over S of a_i h_i;  g_t = (1 - beta) g_(t-1) + beta v
 #   decoder     p = softmax(W_y concat(x_t, g_t) + b_y);  prediction = argmax(p)
 #
@@ -59,13 +59,19 @@ class SSNN:
         return State(np.zeros((E, H), self.dtype), np.zeros(H, self.dtype))
 
     # The k experts of an event and their weights. Learned: the k largest logits, ties broken by the lower index so
-    # the choice is reproducible (np.argpartition doesn't keep a stable order). Random: k experts drawn at random, with equal weights (a baseline that
-    # separates a learned routing from an arbitrary one).
+    # the choice is reproducible (np.argpartition doesn't keep a stable order). Random: k experts drawn at random, with
+    # equal weights (a baseline that separates a learned routing from an arbitrary one). Fixed: the experts that
+    # fixed_routes gives to the largest input of the event, with equal weights (an oracle that tests the rest of the
+    # architecture when the routing is right).
     def route(self, q):
         k = self.config["top_k"]
 
         if self.config["router"] == "random":
             selected = self.routing_rng.choice(self.config["num_experts"], size=k, replace=False)
+            return None, selected, np.full(k, 1 / k, self.dtype)
+
+        if self.config["router"] == "fixed":
+            selected = np.array(self.config["fixed_routes"][int(np.argmax(q[:self.config["input_dim"]]))])
             return None, selected, np.full(k, 1 / k, self.dtype)
 
         logits = self.params["W_r"] @ q + self.params["b_r"]
@@ -90,7 +96,8 @@ class SSNN:
         for j, i in enumerate(selected):
             u = p["W_x"][i] @ x + p["W_h"][i] @ h_prev[j] + p["b"][i]
             n[j] = np.tanh(u)
-            h[i] = (1 - rho) * h_prev[j] + rho * n[j]
+            strength = write_strength(self.config, weights[j])
+            h[i] = (1 - strength) * h_prev[j] + strength * n[j]
 
         v = weights @ h[selected]
         g = (1 - beta) * state.g + beta * v
@@ -116,6 +123,11 @@ class SSNN:
             for name in PARAMETER_NAMES:
                 model.params[name] = saved[name].copy()
         return model
+
+
+# How much of its new value a selected expert takes: rho, or rho times its weight with the gated write
+def write_strength(config, weight):
+    return config["rho"] * weight if config["write"] == "gated" else config["rho"]
 
 
 # Parameter counts: all of them, and those an event touches (k experts, the router and the decoder)

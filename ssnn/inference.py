@@ -37,6 +37,7 @@ class SelectiveEngine:
         self.b, self.W_r, self.b_r, self.W_y, self.b_y = (p[name] for name in ("b", "W_r", "b_r", "W_y", "b_y"))
         self.E, self.d, self.k = c["num_experts"], c["input_dim"], c["top_k"]
         self.rho, self.beta, self.tau = c["rho"], c["beta"], c["routing_temperature"]
+        self.gated = c["write"] == "gated"  # the write strength is rho times the weight of the expert
         self.q = np.empty(c["input_dim"] + c["state_dim"], model.dtype)   # concat(x, g), reused
         self.xh = np.empty(c["input_dim"] + c["state_dim"], model.dtype)  # concat(x, h_i), reused
         self.u = np.empty(c["state_dim"], model.dtype)
@@ -79,13 +80,15 @@ class SelectiveEngine:
             np.matmul(self.W_xh[i], xh, out=u)
             u += self.b[i]
             np.tanh(u, out=u)
-            u *= self.rho
-            h *= 1 - self.rho
-            h += u  # h = (1 - rho) h + rho n
+            weight = exps[j] / total
+            strength = self.rho * weight if self.gated else self.rho
+            u *= strength
+            h *= 1 - strength
+            h += u  # h = (1 - s) h + s n
             if j == 0:
-                np.multiply(h, exps[j] / total, out=v)
+                np.multiply(h, weight, out=v)
             else:
-                v += (exps[j] / total) * h
+                v += weight * h
         if marks is not None:
             marks.append(time.perf_counter_ns())
 
@@ -113,6 +116,7 @@ class AllExpertsEngine:
         self.W_h, self.b, self.W_r, self.b_r, self.W_y, self.b_y = (p[name] for name in ("W_h", "b", "W_r", "b_r", "W_y", "b_y"))
         self.E, self.H, self.d = E, H, d
         self.rho, self.beta, self.tau = c["rho"], c["beta"], c["routing_temperature"]
+        self.gated = c["write"] == "gated"  # the write strength is rho times the weight of the expert
         self.q = np.empty(d + H, model.dtype)
         self.weights = np.empty(E, model.dtype)
         self.probabilities = np.empty(c["num_classes"], model.dtype)
@@ -128,8 +132,9 @@ class AllExpertsEngine:
         u += np.matmul(self.W_h, state.h[:, :, None])[:, :, 0]  # each expert's own recurrent matrix
         u += self.b
         np.tanh(u, out=u)
-        state.h *= 1 - self.rho
-        state.h += self.rho * u
+        strength = self.rho * self.weights[:, None] if self.gated else self.rho  # one per expert, or rho for all
+        state.h *= 1 - strength
+        state.h += strength * u
 
         state.g *= 1 - self.beta
         state.g += self.beta * (self.weights @ state.h)

@@ -13,9 +13,14 @@ DEFAULT_CONFIG = {
     "top_k": 2,                   # k experts run per event
     "num_classes": 2,             # C
     "rho": 0.35,                  # how much of its new value an expert takes when it runs: h = (1 - rho) h + rho n
+    "write": "fixed",             # or "gated": an expert writes in proportion to the weight a the router gives it,
+                                  # h = (1 - rho a) h + rho a n, so a small weight leaves its state almost unchanged
     "beta": 0.60,                 # the same for the global state: g = (1 - beta) g + beta v
     "routing_temperature": 1.0,   # tau: the weights of the selected experts are softmax(z / tau)
-    "router": "learned",          # or "random": k experts drawn at random per event, with equal weights (a baseline)
+    "router": "learned",          # or "random": k experts drawn at random per event, with equal weights (a baseline),
+                                  # or "fixed": the experts of fixed_routes, chosen by hand (an oracle)
+    "fixed_routes": None,         # with router "fixed": for each input feature, the k experts of an event whose
+                                  # largest input is that feature (e.g. the one-hot command of a sequence)
     "batch_size": 32,
     "epochs": 30,
     "learning_rate": 1e-3,
@@ -42,13 +47,22 @@ def validate(config):
         (1 <= config["top_k"] <= config["num_experts"], "top_k must be between 1 and num_experts"),
         (0 < config["rho"] <= 1 and 0 < config["beta"] <= 1, "rho and beta must be in (0, 1]"),
         (config["routing_temperature"] > 0, "routing_temperature must be positive"),
-        (config["router"] in ("learned", "random"), "router must be learned or random"),
+        (config["router"] in ("learned", "random", "fixed"), "router must be learned, random or fixed"),
+        (config["write"] in ("fixed", "gated"), "write must be fixed or gated"),
+        (config["router"] != "fixed" or valid_routes(config), "fixed_routes needs, for each input, k different experts"),
         (min(config["input_dim"], config["state_dim"], config["num_classes"]) >= 1, "the dimensions must be at least 1"),
     ]
 
     for ok, message in checks:
         if not ok:
             raise ValueError(message)
+
+
+def valid_routes(config):
+    routes = config["fixed_routes"]
+    return (isinstance(routes, list) and len(routes) == config["input_dim"]
+            and all(len(set(route)) == config["top_k"] == len(route) for route in routes)
+            and all(0 <= expert < config["num_experts"] for route in routes for expert in route))
 
 
 # A short fingerprint of a configuration, to record with every result
