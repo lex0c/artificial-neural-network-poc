@@ -235,6 +235,32 @@ What it shows:
   events. The router hasn't learned to keep the memory experts away from the noise: about one NOOP in three selects
   one of them. The top-k choice itself gets no gradient, so nothing tells the router not to pick an expert. The gated
   write makes each such event less harmful, but doesn't prevent them, and over 200 events the small damages add up.
+### Training on longer gaps
+
+If the router leaks because the training never made a leak costly over a long gap, training on longer gaps should
+help. The same experiment with training distances up to 100 instead of 30 (`--max-distance 100`), for the learned
+router, the gated write and the GRUs, seeds 7, 19 and 43:
+
+| Model | Distance 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | NOOPs touching the memory | Their mean write on it |
+| --- | --- | --- | --- | --- | --- | --- |
+| SSNN, gated write | 98.6% | 98.8% | 98.1% | 97.1% (96.7 to 97.7) | 20% | 0.035 |
+| SSNN, learned, fixed write | 87.4% | 87.2% | 87.9% | 84.7% | 29% | 0.102 |
+| GRU (28), same work | 93.6% | 92.6% | 95.4% | 92.9% (91.7 to 94.7) | | |
+| GRU (64) | 77.8% | 74.3% | 78.4% | 77.1% | | |
+
+- **With the gated write, the SSNN now beats the GRU of the same work at every distance**, including those it never
+  saw: 97.1% against 92.9% from 101 to 200 events, and its worst seed is above the best seed of the GRU.
+- **The router learned to protect its memory, but not by avoiding it**: the NOOPs still select a memory expert 20% of
+  the time, but with a small weight, so their mean write on it fell to 0.035, against 0.102 with the fixed write (whose
+  write is always rho = 0.35 when selected). Protecting the memory needed both: the gated write, which gives the router
+  a gradient for how much an expert writes, and long gaps in the training, which make a careless write costly.
+- **With the fixed write, longer gaps don't help**, and the training got worse: with the top-k alone, nothing tells
+  the router how to protect a memory.
+- **The GRU with 64 neurons didn't train well on the longer sequences** at this learning rate (0.003, the same for
+  every model): on one seed its best epoch was the first, and it ended near chance; on the others it stopped improving
+  around epoch 10. Trained on gaps up to 30 it had reached 98% at every distance, so this says nothing about its
+  capacity, only that its learning rate wasn't tuned for long sequences. The GRU of the same work trained steadily.
+
 - With a single register and no noise, every model answers right at every distance, including the dense RNN, and even
   the learned SSNN, whose NOOPs go through the memory expert most of the time: holding one bit against an input that
   never changes is easy for any recurrent network. The noise and the number of registers are what make the task
@@ -247,8 +273,8 @@ What it shows:
 | Running k of E experts reduces the computation per event | supported: the cost per event barely depends on E, 30 times less than running all 128 experts |
 | That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event in Python |
 | The stored capacity buys quality | not supported in experiment D, where the SSNN stays below dense networks of the same work; the task turned out to be limited by data, so a larger version is still open |
-| Persistent states help on tasks that need memory | supported with the right routing (perfect memory at every distance, with the least work), and in part with a learned router (above a GRU of the same work within the trained distances, below it beyond) |
-| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it doesn't learn to keep the memory experts out of the gaps |
+| Persistent states help on tasks that need memory | supported: with the right routing, perfect memory at every distance with the least work; with a learned router, the gated write and long gaps in the training, above a GRU of the same work at every distance, up to 200 events |
+| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it learns to protect its memory with the gated write, by writing little to it rather than avoiding it |
 
 ## Conclusion so far
 
@@ -261,16 +287,18 @@ specialization even cost accuracy in experiment D, as each expert learns from on
 
 Experiment B (memory) is where the architecture shows what it is for: experts that don't run keep their state exactly,
 which gives a memory that neither fades nor gets disturbed, at a low cost per event. With the right routing it
-remembers perfectly; with a learned router it beats a GRU of the same work on the distances it trained on, but leaks
-over longer ones. The weak point isn't the architecture, it's teaching the router to protect its memory.
+remembers perfectly. With a learned router, it first leaked over long gaps; with the gated write (each expert writes
+in proportion to its router weight) and long gaps in the training, the router learned to protect its memory, and the
+SSNN beat a GRU of the same work at every distance, up to 200 events.
 
 What stays open, in the order it would be worth testing:
 
-1. **Teaching the router to protect its memory**: training on longer gaps, so the leaks cost more during training;
-   then, if that isn't enough, gradients for the top-k choice itself (straight-through estimates or REINFORCE).
+1. **Other memory tasks**, to see whether this holds beyond one task: more registers, values of more than one bit,
+   gaps longer than 200, and GRUs whose learning rate is tuned for long sequences.
 2. **Capacity at a larger scale**: many more examples per regime and harder rules.
 3. **Speed** (compiled code, routing with locality, grouping the events of many sessions by expert): it matters only
-   where the SSNN is better.
+   where the SSNN is better, which now means memory. In Python, an SSNN event still takes 2 to 4 times as long as a
+   dense network doing the same work.
 
 These are results of a first version: one laptop CPU, Python and NumPy, small tasks, hyperparameters not tuned, 3
 seeds.
