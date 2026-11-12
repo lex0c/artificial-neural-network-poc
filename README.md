@@ -237,3 +237,10 @@ Ctrl+C.
 It works with any `FeedForward` model, whatever it does: the model tells its observers about each forward pass,
 update and metric (`notify` in `feedforward.py`), and `monitor.py` keeps a copy at most every 0.1 s, so watching a
 training barely slows it down (MNIST trains about 7% slower with the page open). The server only listens on this machine and uses only the standard library.
+
+## An experiment: the SSNN
+
+[`ssnn/`](ssnn/README.md) is a proof of concept of another kind of network, built on the same shared modules
+(activations, optimizers, gradient checks): a router picks a few recurrent modules per event, and only those run and
+update their state. It asks whether that selective processing can match dense networks while doing less work per event
+on a CPU. Its README describes the model, the experiments so far and their results.
