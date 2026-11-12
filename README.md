@@ -33,6 +33,7 @@ here).
    - `losses.py`: mean squared error and cross-entropy (categorical and binary), and their derivatives.
    - `optimizers.py`: plain gradient descent (SGD), momentum, RMSprop and Adam.
    - `data.py`: one-hot encoding, normalization, batches and seeds.
+   - `gradcheck.py`: gradients measured numerically, to check the ones written by hand.
 3. **The examples**, from the simplest (below).
 4. **Reinforcement learning**:
    - [DQN.md](DQN.md) and `dqn.py`: a Deep Q-Network, which learns the value of each action.

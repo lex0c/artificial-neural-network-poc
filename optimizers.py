@@ -2,27 +2,29 @@ import numpy as np
 
 
 # An optimizer decides how the gradients change the parameters in each update (the last step of train_step).
-# Each one has update(layers, gradients, learning_rate), where gradients holds (dL/dweights, dL/dbiases) per layer.
+#
+# Each one has update(params, grads, learning_rate): params is a list of arrays, which it changes in place, and grads
+# the gradient of the loss with respect to each of them, in the same order. Any model can use them: FeedForward passes
+# the weights and the biases of its layers (see FeedForward.update), and ssnn/ the arrays of its own modules.
 
 
-# The state that momentum, RMSprop and Adam keep for every parameter: an array of zeros shaped like the weights and the
-# biases of each layer. It starts over when the number of layers changes (a layer added after some training), so the
-# new layer gets a state of its own instead of being left out.
-def zeros_like_layers(layers):
-    return [{"weights": np.zeros_like(l["weights"]), "biases": np.zeros_like(l["biases"])} for l in layers]
+# The state that momentum, RMSprop and Adam keep for every parameter: an array of zeros shaped like each array of
+# params. It starts over when the number of arrays changes (e.g. a layer added after some training), so the new ones
+# get a state of their own instead of being left out.
+def zeros_like_params(params):
+    return [np.zeros_like(param) for param in params]
 
 
-def needs_new_state(state, layers):
-    return state is None or len(state) != len(layers)
+def needs_new_state(state, params):
+    return state is None or len(state) != len(params)
 
 
 # Plain gradient descent: every parameter moves by -learning_rate * gradient. The step is proportional to the gradient,
 # so parameters with small gradients learn slowly, and one learning rate has to suit every parameter.
 class SGD:
-    def update(self, layers, gradients, learning_rate):
-        for layer, (grad_weights, grad_biases) in zip(layers, gradients):
-            layer["weights"] -= learning_rate * grad_weights
-            layer["biases"] -= learning_rate * grad_biases
+    def update(self, params, grads, learning_rate):
+        for param, grad in zip(params, grads):
+            param -= learning_rate * grad
 
 
 # Momentum: each parameter keeps a velocity, the running sum of its gradients with the older ones fading by beta in
@@ -34,15 +36,14 @@ class Momentum:
         self.beta = beta  # how much of the previous velocity each update keeps
         self.velocity = None
 
-    def update(self, layers, gradients, learning_rate):
-        if needs_new_state(self.velocity, layers):
-            self.velocity = zeros_like_layers(layers)
+    def update(self, params, grads, learning_rate):
+        if needs_new_state(self.velocity, params):
+            self.velocity = zeros_like_params(params)
 
-        for layer, velocity, layer_gradients in zip(layers, self.velocity, gradients):
-            for key, grad in zip(("weights", "biases"), layer_gradients):
-                velocity[key] *= self.beta  # velocity = beta * velocity + grad
-                velocity[key] += grad
-                layer[key] -= learning_rate * velocity[key]
+        for param, velocity, grad in zip(params, self.velocity, grads):
+            velocity *= self.beta  # velocity = beta * velocity + grad
+            velocity += grad
+            param -= learning_rate * velocity
 
 
 # RMSprop: each parameter keeps the running mean of its squared gradients (with rho, how much of it each update keeps),
@@ -55,15 +56,14 @@ class RMSprop:
         self.epsilon = epsilon  # avoids a division by 0
         self.mean_square = None
 
-    def update(self, layers, gradients, learning_rate):
-        if needs_new_state(self.mean_square, layers):
-            self.mean_square = zeros_like_layers(layers)
+    def update(self, params, grads, learning_rate):
+        if needs_new_state(self.mean_square, params):
+            self.mean_square = zeros_like_params(params)
 
-        for layer, mean_square, layer_gradients in zip(layers, self.mean_square, gradients):
-            for key, grad in zip(("weights", "biases"), layer_gradients):
-                mean_square[key] *= self.rho  # mean_square = rho * mean_square + (1 - rho) * grad^2
-                mean_square[key] += (1 - self.rho) * grad * grad
-                layer[key] -= learning_rate * grad / (np.sqrt(mean_square[key]) + self.epsilon)
+        for param, mean_square, grad in zip(params, self.mean_square, grads):
+            mean_square *= self.rho  # mean_square = rho * mean_square + (1 - rho) * grad^2
+            mean_square += (1 - self.rho) * grad * grad
+            param -= learning_rate * grad / (np.sqrt(mean_square) + self.epsilon)
 
 
 # Adam (adaptive moment estimation) keeps two running averages for every parameter:
@@ -86,9 +86,9 @@ class Adam:
         self.v = None
         self.t = 0              # number of updates so far
 
-    def update(self, layers, gradients, learning_rate):
-        if needs_new_state(self.m, layers):
-            self.m, self.v = zeros_like_layers(layers), zeros_like_layers(layers)
+    def update(self, params, grads, learning_rate):
+        if needs_new_state(self.m, params):
+            self.m, self.v = zeros_like_params(params), zeros_like_params(params)
             self.t = 0  # the bias correction starts over with the averages
 
         self.t += 1
@@ -98,18 +98,18 @@ class Adam:
         # Both corrections are the same number for all the parameters of an update, so they can be folded into the
         # step size (and epsilon scaled to match), which gives exactly the same update with fewer passes over the arrays
         # (as noted in section 2 of the Adam paper).
-        step_size = learning_rate * np.sqrt(1 - self.beta2 ** self.t) / (1 - self.beta1 ** self.t)
-        epsilon = self.epsilon * np.sqrt(1 - self.beta2 ** self.t)
+        # Python floats (not NumPy scalars), so float32 parameters are updated in float32
+        step_size = float(learning_rate * np.sqrt(1 - self.beta2 ** self.t) / (1 - self.beta1 ** self.t))
+        epsilon = float(self.epsilon * np.sqrt(1 - self.beta2 ** self.t))
 
-        for layer, m, v, layer_gradients in zip(layers, self.m, self.v, gradients):
-            for key, grad in zip(("weights", "biases"), layer_gradients):
-                # The running averages, updated in place: m = beta1 * m + (1 - beta1) * grad, and the same for v
-                m[key] *= self.beta1
-                m[key] += (1 - self.beta1) * grad
-                v[key] *= self.beta2
-                v[key] += (1 - self.beta2) * grad * grad
+        for param, m, v, grad in zip(params, self.m, self.v, grads):
+            # The running averages, updated in place: m = beta1 * m + (1 - beta1) * grad, and the same for v
+            m *= self.beta1
+            m += (1 - self.beta1) * grad
+            v *= self.beta2
+            v += (1 - self.beta2) * grad * grad
 
-                layer[key] -= step_size * m[key] / (np.sqrt(v[key]) + epsilon)
+            param -= step_size * m / (np.sqrt(v) + epsilon)
 
 
 OPTIMIZERS = {"sgd": SGD, "momentum": Momentum, "rmsprop": RMSprop, "adam": Adam}

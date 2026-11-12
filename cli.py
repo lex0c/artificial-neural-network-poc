@@ -3,7 +3,6 @@ import os
 import sys
 import time
 
-from feedforward import load_model
 from progress import display_path
 
 
@@ -116,5 +115,7 @@ def keep_dashboard_open(monitor):
 def load_trained_model(path, train_command):
     if not os.path.exists(path):
         sys.exit(f"{display_path(path)} not found: train it first with python {train_command}")
+
+    from feedforward import load_model  # here, so importing cli doesn't load feedforward (and its dependencies)
 
     return load_model(path)

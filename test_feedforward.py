@@ -11,6 +11,7 @@ from joblib import dump, load
 from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax, tanh, tanh_derivative
 from data import set_seed, to_categorical
 from feedforward import FeedForward, load_model, clone_model
+from gradcheck import numerical_gradients as central_differences
 from losses import loss_derivative_fn, loss_fn, sigmoid_binary_crossentropy_delta, softmax_crossentropy_delta
 from optimizers import Adam, Momentum, RMSprop, SGD
 
@@ -42,38 +43,15 @@ def make_targets(loss, output_act, rng):
 
 
 def numerical_gradients(model, inputs, targets, eps=1e-6, penalty=None):
-    # Central differences of the mean batch loss (plus an optional penalty on the model) in relation to every
-    # weight and bias
+    # Central differences (gradcheck.py) of the mean batch loss, plus an optional penalty on the model, in relation to
+    # every weight and bias: one {"weights", "biases"} per layer
     def objective():
         loss = loss_fn(model.configs["loss"], targets, model.forward(inputs))
         return loss + (penalty(model) if penalty else 0.0)
 
-    gradients = []
-
-    for layer in model.layers:
-        layer_gradients = {}
-
-        for key in ("weights", "biases"):
-            params = layer[key]
-            grad = np.zeros_like(params)
-
-            for idx in np.ndindex(params.shape):
-                original = params[idx]
-
-                params[idx] = original + eps
-                loss_plus = objective()
-
-                params[idx] = original - eps
-                loss_minus = objective()
-
-                params[idx] = original
-                grad[idx] = (loss_plus - loss_minus) / (2 * eps)
-
-            layer_gradients[key] = grad
-
-        gradients.append(layer_gradients)
-
-    return gradients
+    params = [layer[key] for layer in model.layers for key in ("weights", "biases")]
+    grads = central_differences(objective, params, eps)
+    return [{"weights": grads[2 * i], "biases": grads[2 * i + 1]} for i in range(len(model.layers))]
 
 
 def applied_gradients(model, inputs, targets, learning_rate=0.5, **train_options):
@@ -384,47 +362,48 @@ class WorkedExampleTest(unittest.TestCase):
 
 
 class OptimizerTest(unittest.TestCase):
+    # The optimizers take a list of arrays to change in place, and their gradients in the same order
     def one_parameter(self):
-        return [{"weights": np.array([[1.0]]), "biases": np.array([0.0])}]
+        return [np.array([[1.0]])]
 
     def test_adam_steps_by_hand(self):
         # Gradients 2 and then 4, learning rate 0.1, beta1 0.9, beta2 0.999:
         #   t=1: m = 0.2, v = 0.004, corrected m = 2, v = 4: the step is 0.1 * 2 / sqrt(4) = 0.1
         #   t=2: m = 0.58, v = 0.019996, corrected m = 3.0526, v = 10.003: the step is 0.1 * 3.0526 / 3.1628 = 0.0965
-        layers = self.one_parameter()
+        params = self.one_parameter()
         adam = Adam()
 
-        adam.update(layers, [(np.array([[2.0]]), np.array([2.0]))], learning_rate=0.1)
-        np.testing.assert_allclose(layers[0]["weights"], [[0.9000000005]], rtol=1e-12)
+        adam.update(params, [np.array([[2.0]])], learning_rate=0.1)
+        np.testing.assert_allclose(params[0], [[0.9000000005]], rtol=1e-12)
 
-        adam.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
-        np.testing.assert_allclose(layers[0]["weights"], [[0.8034817982229947]], rtol=1e-12)
+        adam.update(params, [np.array([[4.0]])], learning_rate=0.1)
+        np.testing.assert_allclose(params[0], [[0.8034817982229947]], rtol=1e-12)
 
     def test_momentum_steps_by_hand(self):
         # Gradients 2 and then 4, learning rate 0.1, beta 0.9:
         #   velocity 2: the weight goes from 1 to 1 - 0.1 * 2 = 0.8
         #   velocity 0.9 * 2 + 4 = 5.8: it goes to 0.8 - 0.1 * 5.8 = 0.22
-        layers = self.one_parameter()
+        params = self.one_parameter()
         momentum = Momentum()
 
-        momentum.update(layers, [(np.array([[2.0]]), np.array([2.0]))], learning_rate=0.1)
-        np.testing.assert_allclose(layers[0]["weights"], [[0.8]])
+        momentum.update(params, [np.array([[2.0]])], learning_rate=0.1)
+        np.testing.assert_allclose(params[0], [[0.8]])
 
-        momentum.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
-        np.testing.assert_allclose(layers[0]["weights"], [[0.22]])
+        momentum.update(params, [np.array([[4.0]])], learning_rate=0.1)
+        np.testing.assert_allclose(params[0], [[0.22]])
 
     def test_rmsprop_steps_by_hand(self):
         # Gradients 2 and then 4, learning rate 0.1, rho 0.9:
         #   mean square 0.1 * 4 = 0.4: the step is 0.1 * 2 / sqrt(0.4) = 0.31623
         #   mean square 0.9 * 0.4 + 0.1 * 16 = 1.96: the step is 0.1 * 4 / 1.4 = 0.28571
-        layers = self.one_parameter()
+        params = self.one_parameter()
         rmsprop = RMSprop()
 
-        rmsprop.update(layers, [(np.array([[2.0]]), np.array([2.0]))], learning_rate=0.1)
-        np.testing.assert_allclose(layers[0]["weights"], [[1 - 0.2 / np.sqrt(0.4)]])
+        rmsprop.update(params, [np.array([[2.0]])], learning_rate=0.1)
+        np.testing.assert_allclose(params[0], [[1 - 0.2 / np.sqrt(0.4)]])
 
-        rmsprop.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
-        np.testing.assert_allclose(layers[0]["weights"], [[1 - 0.2 / np.sqrt(0.4) - 0.4 / 1.4]])
+        rmsprop.update(params, [np.array([[4.0]])], learning_rate=0.1)
+        np.testing.assert_allclose(params[0], [[1 - 0.2 / np.sqrt(0.4) - 0.4 / 1.4]])
 
     def test_a_layer_added_after_training_is_trained_too(self):
         # The optimizers keep a state per layer; a new layer gets one too, instead of being left out of the updates
@@ -446,16 +425,16 @@ class OptimizerTest(unittest.TestCase):
 
     def test_first_adam_step_doesnt_depend_on_the_gradient_scale(self):
         # SGD moves each parameter in proportion to its gradient; the first Adam step is about the learning rate
-        gradients = [(np.array([[1e-4, 1e3]]), np.array([-5.0]))]
+        grads = [np.array([[1e-4, 1e3]]), np.array([-5.0])]
 
-        sgd_layers = [{"weights": np.zeros((1, 2)), "biases": np.zeros(1)}]
-        SGD().update(sgd_layers, gradients, learning_rate=0.01)
-        np.testing.assert_allclose(sgd_layers[0]["weights"], [[-1e-6, -10.0]])
+        sgd_params = [np.zeros((1, 2)), np.zeros(1)]
+        SGD().update(sgd_params, grads, learning_rate=0.01)
+        np.testing.assert_allclose(sgd_params[0], [[-1e-6, -10.0]])
 
-        adam_layers = [{"weights": np.zeros((1, 2)), "biases": np.zeros(1)}]
-        Adam().update(adam_layers, gradients, learning_rate=0.01)
-        np.testing.assert_allclose(adam_layers[0]["weights"], [[-0.01, -0.01]], rtol=1e-3)
-        np.testing.assert_allclose(adam_layers[0]["biases"], [0.01], rtol=1e-6)
+        adam_params = [np.zeros((1, 2)), np.zeros(1)]
+        Adam().update(adam_params, grads, learning_rate=0.01)
+        np.testing.assert_allclose(adam_params[0], [[-0.01, -0.01]], rtol=1e-3)
+        np.testing.assert_allclose(adam_params[1], [0.01], rtol=1e-6)
 
     def test_adam_state_carries_over_between_train_calls(self):
         rng = np.random.default_rng(10)
@@ -656,18 +635,11 @@ class DropoutTest(unittest.TestCase):
         np.random.seed(5)
         predictions = model.forward_layers(inputs, training=True)
         self.assertTrue(any((cache["mask"] == 0).any() for cache in model.cache))  # some inputs were dropped
-        actual = model.backward(model.output_delta(targets, predictions))
+        actual = [grad for layer_gradients in model.backward(model.output_delta(targets, predictions)) for grad in layer_gradients]
 
-        for layer, (grad_weights, grad_biases) in zip(model.layers, actual):
-            for params, grad in ((layer["weights"], grad_weights), (layer["biases"], grad_biases)):
-                for idx in np.ndindex(params.shape):
-                    original = params[idx]
-                    params[idx] = original + 1e-6
-                    loss_plus = loss()
-                    params[idx] = original - 1e-6
-                    loss_minus = loss()
-                    params[idx] = original
-                    self.assertAlmostEqual(grad[idx], (loss_plus - loss_minus) / 2e-6, delta=1e-6)
+        expected = central_differences(loss, [layer[key] for layer in model.layers for key in ("weights", "biases")])
+        for act, exp in zip(actual, expected):
+            np.testing.assert_allclose(act, exp, atol=1e-6)
 
     def test_drops_and_scales_the_inputs_only_while_training(self):
         model = self.model(dropout=0.5)

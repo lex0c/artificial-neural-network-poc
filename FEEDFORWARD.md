@@ -375,7 +375,8 @@ The DQN agent uses this for its target network (see [DQN.md](DQN.md)).
 
 ## Checking the gradients numerically
 
-`test_feedforward.py` checks backpropagation without trusting its formulas: `numerical_gradients` nudges every weight
-by a tiny amount up and down and measures how the loss changes, `(L(w + eps) - L(w - eps)) / (2 * eps)`. If the
-gradients from `backward` match these numbers, backpropagation is right. It is a useful exercise to break a formula in
+`test_feedforward.py` checks backpropagation without trusting its formulas: `numerical_gradients` (in `gradcheck.py`)
+nudges every weight by a tiny amount up and down and measures how the loss changes, `(L(w + eps) - L(w - eps)) / (2 *
+eps)`. If the gradients from `backward` match these numbers, backpropagation is right. `gradcheck.py` takes any loss
+and any list of arrays, so other models with gradients written by hand can be checked the same way. It is a useful exercise to break a formula in
 `backward` and watch the test fail.

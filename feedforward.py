@@ -19,8 +19,19 @@ from progress import format_number, timing
 
 # NumPy's matrix products run on a math library (BLAS) that splits them across all the CPU cores. The matrices of this
 # project are small, and splitting them costs more than it saves: one MNIST epoch takes about 1.7 s with one thread
-# and 2.8 s with 12. So it uses one thread. Call threadpool_limits again (e.g. threadpool_limits(4)) for larger models.
-threadpool_limits(1)
+# and 2.8 s with 12. So the first FeedForward model limits BLAS to one thread, when it is created rather than when this
+# file is imported: code that only imports from it, or doesn't use it at all (ssnn/, whose benchmarks choose the number
+# of threads themselves), keeps the setting it had. For larger models, call threadpool_limits again after creating
+# them (e.g. threadpool_limits(4)).
+blas_threads_limited = False
+
+
+def limit_blas_threads():
+    global blas_threads_limited
+
+    if not blas_threads_limited:
+        threadpool_limits(1)
+        blas_threads_limited = True
 
 
 # A dense (fully connected) layer: each neuron j computes a weighted sum of all the inputs plus its bias,
@@ -66,6 +77,7 @@ class FeedForward:
         self.cache = []    # inputs, z and output of each layer in the last forward pass, used by backward()
         self.history = {}  # loss of each epoch in the last train()
         self.observers = []  # objects told about each forward pass, update and metric (see monitor.py)
+        limit_blas_threads()
 
     # Tells the observers about an event: on_forward(model), on_update(model, gradients, learning_rate) or
     # on_metrics(model, values). Without observers it does nothing.
@@ -345,8 +357,12 @@ class FeedForward:
     # Gradient descent: the gradient points to where the loss grows the fastest, so every parameter takes a small step
     # the other way. The learning rate sets the size of the step: too small learns slowly, too large overshoots.
     # The optimizer decides the exact step: proportional to the gradient (SGD), or adapted to each parameter (Adam).
+    #
+    # gradients holds (dL/dweights, dL/dbiases) per layer; the optimizers take flat lists of arrays (see optimizers.py)
     def update(self, gradients, learning_rate):
-        self.optimizer.update(self.layers, gradients, learning_rate)
+        params = [layer[key] for layer in self.layers for key in ("weights", "biases")]
+        grads = [grad for layer_gradients in gradients for grad in layer_gradients]
+        self.optimizer.update(params, grads, learning_rate)
         self.notify("on_update", gradients, learning_rate)
 
     def summary(self):

@@ -1,5 +1,7 @@
 import numpy as np
 
+from data import as_float
+
 
 # Activation functions are applied to the weighted sum z of each neuron. Without them a stack of layers would still
 # compute a linear function of its input: the non-linearity is what lets a network learn curved relationships.
@@ -13,7 +15,8 @@ def relu(z):
 
 
 def relu_derivative(z):
-    return np.where(np.asarray(z) > 0, 1, 0)
+    z = as_float(z)
+    return (z > 0).astype(z.dtype)  # 1 or 0, in the precision of z
 
 
 # Sigmoid: squashes z into (0, 1), so its output can be read as a probability (e.g. a binary classifier).
@@ -50,7 +53,7 @@ def linear_derivative(z):
 # It normalizes along the last axis, so a batch with shape (batch_size, num_classes) gets one distribution per sample.
 # Subtracting the max doesn't change the result (it cancels out in the division), but keeps exp from overflowing.
 def softmax(z):
-    z = np.asarray(z, dtype=float)
+    z = as_float(z)
     exps = np.exp(z - np.max(z, axis=-1, keepdims=True))
     return exps / np.sum(exps, axis=-1, keepdims=True)
 

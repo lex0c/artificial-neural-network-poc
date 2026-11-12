@@ -1,6 +1,6 @@
 import numpy as np
 
-from data import to_categorical
+from data import as_float, to_categorical
 
 
 # A loss function measures how far the predictions are from the targets, as a single number that training minimizes.
@@ -18,16 +18,21 @@ def num_samples(y_pred):
     return y_pred.shape[0] if y_pred.ndim > 1 else 1
 
 
+# The predictions keep their precision (see as_float in data.py) and the targets take the same one, so float32
+# predictions give a float32 loss and float32 gradients (float32 minus int64 targets would otherwise be float64)
+def as_arrays(y_true, y_pred):
+    y_pred = as_float(y_pred)
+    return np.asarray(y_true).astype(y_pred.dtype, copy=False), y_pred
+
+
 # Mean squared error: the mean of (y_pred - y_true)^2. Used for regression; squaring makes large errors weigh more.
 def mse_loss(y_true, y_pred):
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
+    y_true, y_pred = as_arrays(y_true, y_pred)
     return np.mean((y_pred - y_true) ** 2)
 
 
 def mse_loss_derivative(y_true, y_pred):
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
+    y_true, y_pred = as_arrays(y_true, y_pred)
     return 2 * (y_pred - y_true) / y_pred.size
 
 
@@ -36,14 +41,14 @@ def mse_loss_derivative(y_true, y_pred):
 # wrong.
 # Used for classification with a softmax output. Probabilities are clipped away from 0, so log(0) can't happen.
 def categorical_crossentropy(y_true, y_pred):
-    y_true = np.array(y_true)
-    y_pred = np.clip(np.array(y_pred), 1e-7, 1 - 1e-7)
+    y_true, y_pred = as_arrays(y_true, y_pred)
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
     return np.mean(-np.sum(y_true * np.log(y_pred), axis=-1))
 
 
 def categorical_crossentropy_derivative(y_true, y_pred):
-    y_true = np.array(y_true)
-    y_pred = np.clip(np.array(y_pred), 1e-7, 1 - 1e-7)
+    y_true, y_pred = as_arrays(y_true, y_pred)
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
     return -y_true / y_pred / num_samples(y_pred)
 
 
@@ -51,7 +56,7 @@ def categorical_crossentropy_derivative(y_true, y_pred):
 # y_true can be a single index, a list of indices or a column of indices (shape (batch_size, 1)).
 def sparse_categorical_crossentropy(y_true, y_pred):
     y_true = np.array(y_true, dtype=int).reshape(-1)
-    y_pred = np.clip(np.atleast_2d(np.array(y_pred, dtype=float)), 1e-7, 1 - 1e-7)
+    y_pred = np.clip(np.atleast_2d(as_float(y_pred)), 1e-7, 1 - 1e-7)
 
     true_probs = y_pred[np.arange(len(y_true)), y_true]  # the probability given to the true class of each sample
     return -np.mean(np.log(true_probs))
@@ -59,7 +64,7 @@ def sparse_categorical_crossentropy(y_true, y_pred):
 
 def sparse_categorical_crossentropy_derivative(y_true, y_pred):
     y_true = np.array(y_true, dtype=int).reshape(-1)
-    y_pred = np.array(y_pred, dtype=float)
+    y_pred = as_float(y_pred)
     probs = np.clip(np.atleast_2d(y_pred), 1e-7, 1 - 1e-7)
     rows = np.arange(len(y_true))
 
@@ -75,14 +80,14 @@ def sparse_categorical_crossentropy_derivative(y_true, y_pred):
 # the categorical cross-entropy, it has a term for "no" as well, so it also pushes the probability down when the answer
 # is no. Several sigmoid outputs are several independent yes/no answers (e.g. tags of an image, any number of them true).
 def binary_crossentropy(y_true, y_pred):
-    y_true = np.array(y_true, dtype=float)
-    y_pred = np.clip(np.array(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+    y_true, y_pred = as_arrays(y_true, y_pred)
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
     return np.mean(-(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred)))
 
 
 def binary_crossentropy_derivative(y_true, y_pred):
-    y_true = np.array(y_true, dtype=float)
-    y_pred = np.clip(np.array(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+    y_true, y_pred = as_arrays(y_true, y_pred)
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
     return (y_pred - y_true) / (y_pred * (1 - y_pred)) / y_pred.size  # -y/p + (1 - y)/(1 - p), averaged
 
 
@@ -133,13 +138,14 @@ def loss_derivative_fn(name, y_true, y_pred):
 #
 # The simplification assumes each row of y_true sums to 1 (one-hot or soft labels), as class probabilities do.
 def softmax_crossentropy_delta(name, y_true, y_pred):
-    y_pred = np.array(y_pred, dtype=float)
+    y_pred = as_float(y_pred)
 
     if name == "sparse_categorical_crossentropy":
         class_indices = np.array(y_true, dtype=int).reshape(-1)
         y_true = to_categorical(class_indices, num_classes=y_pred.shape[-1]).reshape(y_pred.shape)
 
-    return (y_pred - np.array(y_true)) / num_samples(y_pred)
+    y_true, y_pred = as_arrays(y_true, y_pred)
+    return (y_pred - y_true) / num_samples(y_pred)
 
 
 def is_softmax_crossentropy(act_fn, loss):
@@ -151,8 +157,8 @@ def is_softmax_crossentropy(act_fn, loss):
 # by the number of values averaged. Without it, a confident wrong answer (y_pred close to 0 when y_true is 1) would
 # divide by almost 0 and multiply by almost 0.
 def sigmoid_binary_crossentropy_delta(y_true, y_pred):
-    y_pred = np.array(y_pred, dtype=float)
-    return (y_pred - np.array(y_true, dtype=float).reshape(y_pred.shape)) / y_pred.size
+    y_true, y_pred = as_arrays(y_true, y_pred)
+    return (y_pred - y_true.reshape(y_pred.shape)) / y_pred.size
 
 
 def is_sigmoid_binary_crossentropy(act_fn, loss):
