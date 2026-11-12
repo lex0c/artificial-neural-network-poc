@@ -70,16 +70,51 @@ def sparse_categorical_crossentropy_derivative(y_true, y_pred):
     return gradients.reshape(y_pred.shape)
 
 
+# Binary cross-entropy: -(y_true * log(y_pred) + (1 - y_true) * log(1 - y_pred)) for each output, averaged. Each output
+# is a yes/no answer given as the probability of "yes" (a sigmoid output), and y_true is 1 for yes and 0 for no. Unlike
+# the categorical cross-entropy, it has a term for "no" as well, so it also pushes the probability down when the answer
+# is no. Several sigmoid outputs are several independent yes/no answers (e.g. tags of an image, any number of them true).
+def binary_crossentropy(y_true, y_pred):
+    y_true = np.array(y_true, dtype=float)
+    y_pred = np.clip(np.array(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+    return np.mean(-(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred)))
+
+
+def binary_crossentropy_derivative(y_true, y_pred):
+    y_true = np.array(y_true, dtype=float)
+    y_pred = np.clip(np.array(y_pred, dtype=float), 1e-7, 1 - 1e-7)
+    return (y_pred - y_true) / (y_pred * (1 - y_pred)) / y_pred.size  # -y/p + (1 - y)/(1 - p), averaged
+
+
 LOSSES = {
     "mse": (mse_loss, mse_loss_derivative),
     "categorical_crossentropy": (categorical_crossentropy, categorical_crossentropy_derivative),
     "sparse_categorical_crossentropy": (sparse_categorical_crossentropy, sparse_categorical_crossentropy_derivative),
+    "binary_crossentropy": (binary_crossentropy, binary_crossentropy_derivative),
 }
 
 
 def check_loss(name):
     if name not in LOSSES:
         raise ValueError(f"Invalid loss function: {name}. Use one of {list(LOSSES)}")
+
+
+# The cross-entropy losses read the outputs as probabilities, so each one needs its output activation: the categorical
+# ones a softmax (a distribution over the classes) and the binary one a sigmoid (a probability per yes/no answer). With
+# another output they would train wrong without any error. For example, the categorical cross-entropy of a single
+# sigmoid output is -y * log(p): it is 0 for every sample with y = 0, so nothing pushes p down, and the model learns to
+# answer 1 for everything.
+OUTPUT_OF_LOSS = {
+    "categorical_crossentropy": ("softmax", "for yes/no answers with sigmoid outputs, use binary_crossentropy"),
+    "sparse_categorical_crossentropy": ("softmax", "for yes/no answers with sigmoid outputs, use binary_crossentropy"),
+    "binary_crossentropy": ("sigmoid", "for one class out of several with a softmax output, use categorical_crossentropy"),
+}
+
+
+def check_output_for_loss(act_fn, loss):
+    if loss in OUTPUT_OF_LOSS and act_fn != OUTPUT_OF_LOSS[loss][0]:
+        needed, hint = OUTPUT_OF_LOSS[loss]
+        raise ValueError(f"{loss} needs a {needed} output layer, got {act_fn} ({hint})")
 
 
 def loss_fn(name, y_true, y_pred):
@@ -109,6 +144,19 @@ def softmax_crossentropy_delta(name, y_true, y_pred):
 
 def is_softmax_crossentropy(act_fn, loss):
     return act_fn == "softmax" and loss in ("categorical_crossentropy", "sparse_categorical_crossentropy")
+
+
+# Sigmoid with binary cross-entropy: the same simplification. The derivative of the loss, (y_pred - y_true) /
+# (y_pred * (1 - y_pred)), times the derivative of the sigmoid, y_pred * (1 - y_pred), leaves (y_pred - y_true), divided
+# by the number of values averaged. Without it, a confident wrong answer (y_pred close to 0 when y_true is 1) would
+# divide by almost 0 and multiply by almost 0.
+def sigmoid_binary_crossentropy_delta(y_true, y_pred):
+    y_pred = np.array(y_pred, dtype=float)
+    return (y_pred - np.array(y_true, dtype=float).reshape(y_pred.shape)) / y_pred.size
+
+
+def is_sigmoid_binary_crossentropy(act_fn, loss):
+    return act_fn == "sigmoid" and loss == "binary_crossentropy"
 
 
 # Gradient clipping limits each value of a gradient to [-threshold, threshold], so a single huge error (an outlier,

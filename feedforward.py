@@ -10,7 +10,8 @@ from threadpoolctl import threadpool_limits
 from activations import ACTIVATIONS, activation_fn, activation_backward
 from data import apply_minmax, create_batches, minmax_stats
 from losses import (
-    check_loss, clip_gradients, is_softmax_crossentropy, loss_derivative_fn, loss_fn, softmax_crossentropy_delta,
+    check_loss, check_output_for_loss, clip_gradients, is_sigmoid_binary_crossentropy, is_softmax_crossentropy,
+    loss_derivative_fn, loss_fn, sigmoid_binary_crossentropy_delta, softmax_crossentropy_delta,
 )
 from optimizers import make_optimizer
 from progress import format_number, timing
@@ -35,7 +36,16 @@ def layer_forward(inputs, weights, biases, act_fn):
 
 def load_model(filepath):
     model_params = load(filepath)
-    layers = [{"weights": l["weights"], "biases": l["biases"], "act_fn": l["act_fn"]} for l in model_params["layers"]]
+    layers = []
+
+    for saved in model_params["layers"]:
+        layer = {"weights": saved["weights"], "biases": saved["biases"], "act_fn": saved["act_fn"]}
+
+        if "dropout" in saved:  # only in the layers that have it
+            layer["dropout"] = saved["dropout"]
+
+        layers.append(layer)
+
     return FeedForward(layers=layers, configs=model_params["configs"])
 
 
@@ -63,9 +73,14 @@ class FeedForward:
         for observer in self.observers:
             getattr(observer, event)(self, *args)
 
-    def add_layer(self, num_inputs, num_neurons, act_fn):
+    # dropout: the fraction of the inputs of this layer that the training sets to 0 at random, in each step (see
+    # forward_layers). 0.2 or 0.5 are common; 0 (the default) is no dropout.
+    def add_layer(self, num_inputs, num_neurons, act_fn, dropout=0.0):
         if act_fn not in ACTIVATIONS:
             raise ValueError(f"Invalid activation function: {act_fn}. Use one of {list(ACTIVATIONS)}")
+
+        if not 0 <= dropout < 1:
+            raise ValueError(f"dropout must be at least 0 and smaller than 1, got {dropout}")
 
         # The initial weights are random: if they were all equal, every neuron of the layer would compute the same
         # thing and receive the same update forever. Their scale aims to keep the variance of z similar from layer to
@@ -78,18 +93,26 @@ class FeedForward:
         else:
             std_dev = math.sqrt(1 / num_inputs)
 
-        self.layers.append({
+        layer = {
             "weights": np.random.normal(0, std_dev, (num_neurons, num_inputs)),  # one row per neuron
             "biases": np.zeros(num_neurons),
             "act_fn": act_fn,
-        })
+        }
+
+        if dropout > 0:
+            layer["dropout"] = dropout
+
+        self.layers.append(layer)
 
     # loss: the loss function to minimize (see losses.py), or None when the gradient comes from outside the model, as in
     #       PPO (see ppo.py), which then calls forward_layers, backward and update itself
-    # optimizer: how the gradients update the parameters, "sgd" or "adam" (see optimizers.py)
+    # optimizer: how the gradients update the parameters, "sgd", "momentum", "rmsprop" or "adam" (see optimizers.py)
     def configure(self, loss, optimizer="sgd"):
         if loss is not None:
             check_loss(loss)
+
+            if self.layers:
+                check_output_for_loss(self.layers[-1]["act_fn"], loss)  # e.g. a cross-entropy needs probabilities
 
         self.configs["loss"] = loss
         self.configs["optimizer"] = optimizer
@@ -120,13 +143,25 @@ class FeedForward:
 
     # Forward pass over inputs that are already normalized. Keeps the inputs, z and output of every layer in
     # self.cache, because backward() needs them to compute the gradients.
-    def forward_layers(self, values):
+    #
+    # training: applies dropout (train_step sets it). Each input of a layer with dropout is set to 0 with probability
+    # dropout, and the others are multiplied by 1 / (1 - dropout), so every input keeps its expected value and the
+    # predictions, which use all the inputs as they are, see the same scale (inverted dropout). A different random half
+    # (with dropout 0.5) of the inputs is missing in every step, so no neuron can rely on any one input being there:
+    # the network has to spread what it learns, which reduces overfitting.
+    def forward_layers(self, values, training=False):
         self.cache = []
 
         for layer in self.layers:
             inputs = values
+            mask = None  # 0 for the dropped inputs, 1 / (1 - dropout) for the others
+
+            if training and layer.get("dropout", 0) > 0:
+                mask = (np.random.random(np.shape(inputs)) >= layer["dropout"]) / (1 - layer["dropout"])
+                inputs = inputs * mask
+
             z, values = layer_forward(inputs, layer["weights"], layer["biases"], layer["act_fn"])
-            self.cache.append({"inputs": inputs, "z": z, "output": values})
+            self.cache.append({"inputs": inputs, "z": z, "output": values, "mask": mask})
 
         self.notify("on_forward")
         return values
@@ -140,17 +175,28 @@ class FeedForward:
     # validation_data: optional (inputs, targets) not used for training. Its loss (and accuracy, for classification)
     # is calculated after each epoch, to see whether the model generalizes or starts to overfit.
     #
+    # patience: early stopping, with validation_data. The training stops when the validation loss hasn't improved for
+    # patience epochs in a row, and the model goes back to the weights of the epoch with the lowest validation loss
+    # (also when it runs all the epochs), and the optimizer to its state at that epoch. Past that epoch, the model memorizes the training data instead of learning
+    # what generalizes (overfitting), so the number of epochs no longer has to be guessed.
+    #
     # verbose: show a progress bar during each epoch, and a line with the loss every log_every epochs (and the last).
     #
-    # Returns self.history: the loss of each epoch, and the validation metrics.
+    # Returns self.history: the loss of each epoch, the validation metrics and, with patience, the best epoch.
     def train(self, inputs, targets, epochs, learning_rate, batch_size=32, l1_lambda=0.0, l2_lambda=0.0,
-              shuffle=True, verbose=False, validation_data=None, log_every=1):
+              shuffle=True, verbose=False, validation_data=None, log_every=1, patience=None):
+        if patience is not None and (validation_data is None or patience < 1):
+            raise ValueError("patience needs validation_data and must be at least 1")
+
+        check_output_for_loss(self.layers[-1]["act_fn"], self.configs["loss"])
         inputs, targets = self.prepare_dataset(inputs, targets)
         inputs = self.normalize(inputs)  # once for the whole dataset (train_step expects normalized inputs)
         num_batches = math.ceil(len(inputs) / batch_size)
         self.history = {"loss": [], "val_loss": [], "val_accuracy": []}
         start_time = time.time()
         progress_line = ""
+        best_val_loss, best_epoch, best_layers, best_optimizer = math.inf, 0, None, None  # for early stopping
+        stop = False
 
         for epoch in range(epochs):
             order = np.random.permutation(len(inputs)) if shuffle else np.arange(len(inputs))
@@ -179,16 +225,44 @@ class FeedForward:
                 if val_accuracy is not None:
                     summary += f" - val_accuracy {val_accuracy:.4f}"
 
+                # Early stopping: keep the weights of the best epoch, and stop after patience epochs without a better one
+                if patience is not None:
+                    if val_loss < best_val_loss:
+                        best_val_loss, best_epoch, best_layers = val_loss, epoch + 1, self.get_layers()
+                        best_optimizer = copy.deepcopy(self.optimizer)  # its state goes back with the weights
+                    elif epoch + 1 - best_epoch >= patience:
+                        stop = True
+
             self.notify("on_metrics", {"epoch": epoch + 1, "loss": self.history["loss"][-1],
                                        "val_loss": self.history["val_loss"][-1] if validation_data is not None else None,
                                        "val_accuracy": self.history["val_accuracy"][-1] if validation_data is not None else None})
 
-            if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs):
-                summary += f" - {timing(start_time, epoch + 1, epochs)}"
+            if verbose and ((epoch + 1) % log_every == 0 or epoch + 1 == epochs or stop):
+                summary += f" - {timing(start_time, epoch + 1, epoch + 1 if stop else epochs)}"
                 print("\r" + summary.ljust(len(progress_line)))  # replaces the progress bar of the epoch
+
+            if stop:
+                break
 
         if verbose:
             print("\r" + " " * len(progress_line), end="\r")  # clears a progress bar left by an epoch without summary
+
+        if patience is not None and best_layers is not None:
+            self.layers, self.optimizer = best_layers, best_optimizer  # copies of their own, kept at the best epoch
+            self.history["best_epoch"] = best_epoch
+
+            if verbose:
+                best = f"{best_epoch} (val_loss {format_number(best_val_loss)})"
+                if stop:
+                    print(f"Early stopping at epoch {epoch + 1}: no better validation loss for {patience} epochs. "
+                          f"The model goes back to the weights of epoch {best}.")
+                else:
+                    print(f"The model keeps the weights of its best epoch: {best}.")
+
+        elif patience is not None and verbose:  # no epoch had a valid validation loss
+            stopped = f"Early stopping at epoch {epoch + 1}: " if stop else ""
+            print(f"{stopped}the validation loss was never a number (NaN or infinite): the training diverged, and the "
+                  "model keeps the weights of its last epoch. A smaller learning rate usually prevents it.")
 
         return self.history
 
@@ -200,7 +274,7 @@ class FeedForward:
     #   5. update: every parameter takes a step of learning_rate against its gradient
     # Returns the loss of the batch (before the update).
     def train_step(self, inputs, targets, learning_rate, l1_lambda=0.0, l2_lambda=0.0):
-        predictions = self.forward_layers(inputs)
+        predictions = self.forward_layers(inputs, training=True)
         loss = loss_fn(self.configs["loss"], targets, predictions)
         output_delta = self.output_delta(targets, predictions)
         gradients = self.backward(output_delta, l1_lambda, l2_lambda)
@@ -214,6 +288,10 @@ class FeedForward:
         # Softmax with cross-entropy: the chain rule simplifies to (predictions - targets) / batch_size
         if is_softmax_crossentropy(output_layer["act_fn"], self.configs["loss"]):
             return softmax_crossentropy_delta(self.configs["loss"], targets, predictions)
+
+        # Sigmoid with binary cross-entropy: likewise, (predictions - targets) / (batch_size * num_outputs)
+        if is_sigmoid_binary_crossentropy(output_layer["act_fn"], self.configs["loss"]):
+            return sigmoid_binary_crossentropy_delta(targets, predictions)
 
         # Otherwise, the derivative of the loss gives dL/dy (clipped, see clip_gradients), and the chain rule through
         # the activation gives dL/dz = dL/dy * f'(z)
@@ -255,6 +333,11 @@ class FeedForward:
             if i > 0:
                 previous = self.cache[i - 1]
                 grad_inputs = np.dot(delta, layer["weights"])
+
+                # A dropped input didn't reach the layer, so it gets no gradient; the others get the same scale
+                if self.cache[i].get("mask") is not None:
+                    grad_inputs = grad_inputs * self.cache[i]["mask"]
+
                 delta = np.atleast_2d(activation_backward(self.layers[i - 1]["act_fn"], previous["z"], previous["output"], grad_inputs))
 
         return gradients
@@ -283,6 +366,8 @@ class FeedForward:
             print(f"    Number of Neurons: {num_neurons}")
             print(f"    Input Dimension: {num_inputs}")
             print(f"    Number of Parameters: {layer_params}")
+            if layer.get("dropout"):
+                print(f"    Dropout of the inputs: {layer['dropout']}")
             print("--------------")
 
         print(f"Total Parameters: {total_params}")
@@ -332,6 +417,7 @@ class FeedForward:
         return loss, self.accuracy(predictions, test_labels)
 
     # Fraction of correct predictions, for classification models:
+    # - binary_crossentropy: each output is a yes/no answer, yes above 0.5; the fraction of the answers that are right
     # - class indices (sparse_categorical_crossentropy), softmax or several sigmoid outputs: the output with the
     #   highest value is the predicted class
     # - a single sigmoid output (binary classification): above 0.5 is class 1
@@ -339,7 +425,10 @@ class FeedForward:
     def accuracy(self, predictions, labels):
         act_fn = self.layers[-1]["act_fn"]
 
-        if self.configs["loss"] == "sparse_categorical_crossentropy":
+        if self.configs["loss"] == "binary_crossentropy":
+            predicted = predictions > 0.5
+            expected = labels.reshape(predictions.shape) > 0.5
+        elif self.configs["loss"] == "sparse_categorical_crossentropy":
             predicted = np.argmax(predictions, axis=-1)
             expected = labels.astype(int).reshape(predicted.shape)  # labels are class indices
         elif act_fn == "softmax" or (act_fn == "sigmoid" and predictions.shape[-1] > 1):

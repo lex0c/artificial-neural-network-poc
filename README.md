@@ -30,8 +30,8 @@ here).
 2. **The framework**:
    - `feedforward.py`: the `FeedForward` model. Start with `train_step`, which calls the five steps of a training step.
    - `activations.py`: ReLU, sigmoid, tanh, linear and softmax, and their derivatives.
-   - `losses.py`: mean squared error and cross-entropy, and their derivatives.
-   - `optimizers.py`: plain gradient descent (SGD) and Adam.
+   - `losses.py`: mean squared error and cross-entropy (categorical and binary), and their derivatives.
+   - `optimizers.py`: plain gradient descent (SGD), momentum, RMSprop and Adam.
    - `data.py`: one-hot encoding, normalization, batches and seeds.
 3. **The examples**, from the simplest (below).
 4. **Reinforcement learning**:
@@ -81,6 +81,13 @@ python train-mnist.py   # trains and saves models/mnist.joblib (about 15 seconds
 python run-mnist.py     # per-digit report, confusion matrix, and the first mistakes in mnist-errors.png
 ```
 
+The training of 10 epochs stops near the best moment: after it, the validation loss rises while the training loss
+keeps falling (overfitting). `python train-mnist.py --epochs 30 --patience 3` finds that moment by itself (early
+stopping): it stops when the validation loss hasn't improved for 3 epochs and goes back to the best epoch. Over 5
+seeds it stopped after 8 to 12 epochs and scored the same 97.8% as the 10 fixed epochs, which were chosen by hand.
+`python train-mnist.py --epochs 20 --dropout 0.2` (dropout, see FEEDFORWARD.md) scored 98.0% over 5 seeds, every
+one of them better than every seed of the default.
+
 ### 4. Reinforcement learning: CartPole, Acrobot and LunarLander
 
 Two agents learn to balance a pole on a cart ([CartPole](https://gymnasium.farama.org/environments/classic_control/cart_pole)):
@@ -129,6 +136,77 @@ environments that can be shown, `--render` to watch the training (much slower) o
 ```sh
 python train-cartpole.py --seed 0 --episodes 300
 python train-acrobot-ppo.py --render
+```
+
+### 5. Decision boundaries: two spirals
+
+Two spirals wind around each other, one per class, and two models learn to tell them apart: one without hidden
+layers, whose boundary can only be a straight line (62% to 67% right over 5 seeds), and one with two hidden layers of
+16 neurons, which bends its boundary to follow the arms (99.1% to 99.8%). `spirals.png` shows both boundaries, and the network's one
+taking shape along the training. It also shows binary cross-entropy, with one sigmoid output.
+
+```sh
+python train-spirals.py   # about 3 seconds: saves spirals.png
+```
+
+### 6. An autoencoder
+
+A network learns to rebuild MNIST digits through a layer of only 2 numbers. It never sees the labels, yet the 2
+numbers of each digit gather by digit, and `autoencoder.png` shows them as points, with the reconstructions and what
+the second half of the network draws for each point of the plane.
+
+```sh
+python train-autoencoder.py   # about 1 minute: saves autoencoder.png
+```
+
+### 7. Comparing optimizers
+
+SGD, momentum, RMSprop and Adam train the same network over a range of learning rates (see "Optimizers" in
+FEEDFORWARD.md for the results). `optimizers.png` shows the loss for each learning rate, and the training of each
+optimizer with its best one.
+
+```sh
+python compare-optimizers.py   # about 40 seconds: saves optimizers.png
+```
+
+### 8. Overfitting and regularization
+
+With few samples, a network learns them too well: it memorizes their noise, and does worse on new data than on the
+data it learned (overfitting). Two examples show it, and what early stopping, dropout and L2 do about it, each over
+20 seeds.
+
+`train-breast-cancer.py` asks a real yes/no question: is a breast tumor malignant? The 569 tumors of the breast
+cancer dataset of scikit-learn (no download) have 30 measurements each, and the same network trains in three ways.
+Without regularization the validation loss rises again after about 100 epochs, while the training loss keeps
+falling; `breast-cancer.png` shows the curves.
+
+| | Test accuracy | Test loss |
+| --- | --- | --- |
+| No regularization, 500 epochs | 96.5% | 0.156 |
+| Early stopping (patience 20), stopping after about 170 epochs | 97.0% | 0.093 |
+| Dropout 0.5, 500 epochs | 97.0% | 0.130 |
+
+The overfitting shows more in the loss than in the accuracy: the longer the training, the surer the model is of its
+wrong answers.
+
+`compare-regularization.py` trains a large network on only 100 noisy points of each spiral, and `regularization.png`
+draws each boundary: without regularization it bends around every point, even those the noise pushed into the other
+spiral.
+
+| | Right on the training points | Right on new points |
+| --- | --- | --- |
+| No regularization | 99.0% | 87.0% |
+| L2 0.0003 | 97.2% | 88.1% |
+| Dropout 0.2 | 95.9% | 88.3% |
+| Early stopping (patience 50) | 94.2% | 87.9% |
+| Too much: L2 0.003 | 72.1% | 68.8% |
+
+Each one narrows the gap between the two columns, but the last line shows the other side: too much regularization
+keeps the network from following the spirals at all (underfitting).
+
+```sh
+python train-breast-cancer.py      # about 6 seconds: saves breast-cancer.png
+python compare-regularization.py   # about 15 seconds: saves regularization.png
 ```
 
 ## Watching a model live

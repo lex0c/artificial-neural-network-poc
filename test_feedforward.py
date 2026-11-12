@@ -3,15 +3,16 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 
 import numpy as np
-from joblib import load
+from joblib import dump, load
 
 from activations import relu, relu_derivative, sigmoid, sigmoid_derivative, softmax, tanh, tanh_derivative
 from data import set_seed, to_categorical
 from feedforward import FeedForward, load_model, clone_model
-from losses import loss_derivative_fn, loss_fn, softmax_crossentropy_delta
-from optimizers import Adam, SGD
+from losses import loss_derivative_fn, loss_fn, sigmoid_binary_crossentropy_delta, softmax_crossentropy_delta
+from optimizers import Adam, Momentum, RMSprop, SGD
 
 
 NUM_SAMPLES = 5
@@ -33,6 +34,8 @@ def make_targets(loss, output_act, rng):
         return rng.integers(0, NUM_OUTPUTS, NUM_SAMPLES)
     if loss == "categorical_crossentropy":
         return to_categorical(rng.integers(0, NUM_OUTPUTS, NUM_SAMPLES), num_classes=NUM_OUTPUTS)
+    if loss == "binary_crossentropy":
+        return rng.integers(0, 2, (NUM_SAMPLES, NUM_OUTPUTS)).astype(float)  # a yes/no answer per output
     if output_act == "sigmoid":
         return rng.uniform(0, 1, (NUM_SAMPLES, NUM_OUTPUTS))
     return rng.normal(0, 1, (NUM_SAMPLES, NUM_OUTPUTS))
@@ -95,6 +98,7 @@ class GradientCheckTest(unittest.TestCase):
         ("relu", "softmax", "mse"),  # backpropagates through the softmax Jacobian
         ("sigmoid", "softmax", "categorical_crossentropy"),  # softmax + cross-entropy shortcut
         ("relu", "softmax", "sparse_categorical_crossentropy"),
+        ("relu", "sigmoid", "binary_crossentropy"),  # sigmoid + binary cross-entropy shortcut
     ]
 
     def test_backpropagation_matches_numerical_gradients(self):
@@ -312,6 +316,39 @@ class KnownValuesTest(unittest.TestCase):
         np.testing.assert_allclose(softmax_crossentropy_delta("sparse_categorical_crossentropy", self.CLASSES, self.PREDICTIONS), expected)
 
 
+    def test_binary_crossentropy(self):
+        # Answers yes (1) with probability 0.8 and no (0) with probability 0.3 of yes: -(log 0.8 + log 0.7) / 2
+        y_true, y_pred = [1, 0], [0.8, 0.3]
+
+        self.assertAlmostEqual(loss_fn("binary_crossentropy", y_true, y_pred), -(np.log(0.8) + np.log(0.7)) / 2)
+        # (p - y) / (p (1 - p)) / 2
+        np.testing.assert_allclose(loss_derivative_fn("binary_crossentropy", y_true, y_pred), [-0.2 / 0.16 / 2, 0.3 / 0.21 / 2])
+
+    def test_sigmoid_binary_crossentropy_shortcut(self):
+        # (p - y) / number of values, the derivative of the loss times the derivative of the sigmoid, p (1 - p)
+        y_true, y_pred = np.array([[1.0, 0.0]]), np.array([[0.8, 0.3]])
+        chain_rule = loss_derivative_fn("binary_crossentropy", y_true, y_pred) * y_pred * (1 - y_pred)
+
+        np.testing.assert_allclose(sigmoid_binary_crossentropy_delta(y_true, y_pred), [[-0.1, 0.15]])
+        np.testing.assert_allclose(sigmoid_binary_crossentropy_delta(y_true, y_pred), chain_rule)
+
+    def test_binary_crossentropy_corrects_a_confident_mistake(self):
+        # A sigmoid output answers 0.0025 (z = -6) for a sample whose answer is 1. With mse, the gradient of z is
+        # 2 (p - y) * p (1 - p), almost 0 because the sigmoid is flat there; with binary cross-entropy it is p - y.
+        deltas = {}
+
+        for loss in ("mse", "binary_crossentropy"):
+            model = FeedForward()
+            model.add_layer(num_inputs=1, num_neurons=1, act_fn="sigmoid")
+            model.configure(loss=loss)
+            model.layers[0]["weights"][:] = 0.0
+            model.layers[0]["biases"][:] = -6.0
+            deltas[loss] = model.output_delta(np.array([[1.0]]), model.forward_layers(np.array([[0.0]])))[0, 0]
+
+        self.assertAlmostEqual(deltas["binary_crossentropy"], sigmoid(-6.0) - 1)
+        self.assertLess(abs(deltas["mse"]), abs(deltas["binary_crossentropy"]) / 100)
+
+
 class WorkedExampleTest(unittest.TestCase):
     def test_worked_example_in_feedforward_md(self):
         # The training step worked out by hand in FEEDFORWARD.md: y = w * x + b with w = 0.5, b = 0,
@@ -362,6 +399,50 @@ class OptimizerTest(unittest.TestCase):
 
         adam.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
         np.testing.assert_allclose(layers[0]["weights"], [[0.8034817982229947]], rtol=1e-12)
+
+    def test_momentum_steps_by_hand(self):
+        # Gradients 2 and then 4, learning rate 0.1, beta 0.9:
+        #   velocity 2: the weight goes from 1 to 1 - 0.1 * 2 = 0.8
+        #   velocity 0.9 * 2 + 4 = 5.8: it goes to 0.8 - 0.1 * 5.8 = 0.22
+        layers = self.one_parameter()
+        momentum = Momentum()
+
+        momentum.update(layers, [(np.array([[2.0]]), np.array([2.0]))], learning_rate=0.1)
+        np.testing.assert_allclose(layers[0]["weights"], [[0.8]])
+
+        momentum.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
+        np.testing.assert_allclose(layers[0]["weights"], [[0.22]])
+
+    def test_rmsprop_steps_by_hand(self):
+        # Gradients 2 and then 4, learning rate 0.1, rho 0.9:
+        #   mean square 0.1 * 4 = 0.4: the step is 0.1 * 2 / sqrt(0.4) = 0.31623
+        #   mean square 0.9 * 0.4 + 0.1 * 16 = 1.96: the step is 0.1 * 4 / 1.4 = 0.28571
+        layers = self.one_parameter()
+        rmsprop = RMSprop()
+
+        rmsprop.update(layers, [(np.array([[2.0]]), np.array([2.0]))], learning_rate=0.1)
+        np.testing.assert_allclose(layers[0]["weights"], [[1 - 0.2 / np.sqrt(0.4)]])
+
+        rmsprop.update(layers, [(np.array([[4.0]]), np.array([4.0]))], learning_rate=0.1)
+        np.testing.assert_allclose(layers[0]["weights"], [[1 - 0.2 / np.sqrt(0.4) - 0.4 / 1.4]])
+
+    def test_a_layer_added_after_training_is_trained_too(self):
+        # The optimizers keep a state per layer; a new layer gets one too, instead of being left out of the updates
+        rng = np.random.default_rng(11)
+        inputs = rng.normal(0, 1, (8, NUM_INPUTS))
+
+        for optimizer in ("momentum", "rmsprop", "adam"):
+            with self.subTest(optimizer=optimizer):
+                np.random.seed(0)
+                model = FeedForward()
+                model.add_layer(num_inputs=NUM_INPUTS, num_neurons=NUM_HIDDEN, act_fn="tanh")
+                model.configure(loss="mse", optimizer=optimizer)
+                model.train(inputs, rng.normal(0, 1, (8, NUM_HIDDEN)), epochs=1, learning_rate=0.01)
+
+                model.add_layer(num_inputs=NUM_HIDDEN, num_neurons=NUM_OUTPUTS, act_fn="linear")
+                before = model.layers[1]["weights"].copy()
+                model.train(inputs, rng.normal(0, 1, (8, NUM_OUTPUTS)), epochs=1, learning_rate=0.01)
+                self.assertFalse(np.array_equal(model.layers[1]["weights"], before))
 
     def test_first_adam_step_doesnt_depend_on_the_gradient_scale(self):
         # SGD moves each parameter in proportion to its gradient; the first Adam step is about the learning rate
@@ -415,7 +496,7 @@ class OptimizerTest(unittest.TestCase):
         self.assertIsInstance(FeedForward().optimizer, SGD)
 
         with self.assertRaises(ValueError):
-            FeedForward().configure(loss="mse", optimizer="rmsprop")
+            FeedForward().configure(loss="mse", optimizer="adagrad")  # not one of optimizers.py
 
 
 class MetricsTest(unittest.TestCase):
@@ -449,6 +530,15 @@ class MetricsTest(unittest.TestCase):
 
         self.assertAlmostEqual(model.evaluate([[-2.0], [-1.0], [1.0], [2.0]], [0, 1, 1, 1])[1], 0.75)
 
+    def test_binary_accuracy_counts_each_answer(self):
+        # Two yes/no answers per sample (binary_crossentropy): 3 of the 4 answers are right
+        model = FeedForward()
+        model.add_layer(num_inputs=2, num_neurons=2, act_fn="sigmoid")
+        model.configure(loss="binary_crossentropy")
+        predictions, labels = np.array([[0.9, 0.2], [0.4, 0.7]]), np.array([[1, 0], [1, 1]])
+
+        self.assertAlmostEqual(model.accuracy(predictions, labels), 0.75)
+
     def test_validation_metrics_per_epoch(self):
         np.random.seed(0)
         rng = np.random.default_rng(8)
@@ -467,6 +557,165 @@ class MetricsTest(unittest.TestCase):
         val_loss, val_accuracy = model.evaluate(val_inputs, val_targets)
         self.assertAlmostEqual(model.history["val_loss"][-1], val_loss)
         self.assertAlmostEqual(model.history["val_accuracy"][-1], val_accuracy)
+
+
+class LossAndOutputTest(unittest.TestCase):
+    def test_crossentropy_needs_its_output_activation(self):
+        for output_act, loss in (("sigmoid", "categorical_crossentropy"), ("linear", "sparse_categorical_crossentropy"),
+                                 ("softmax", "binary_crossentropy"), ("relu", "binary_crossentropy")):
+            with self.subTest(output=output_act, loss=loss), self.assertRaises(ValueError):
+                build_model("relu", output_act, loss)
+
+    def test_checked_again_when_training(self):
+        # configure before the output layer exists can't check it, so train does
+        model = FeedForward()
+        model.configure(loss="categorical_crossentropy")
+        model.add_layer(num_inputs=1, num_neurons=1, act_fn="sigmoid")
+
+        with self.assertRaises(ValueError):
+            model.train([[0.0]], [[1.0]], epochs=1, learning_rate=0.1)
+
+
+class EarlyStoppingTest(unittest.TestCase):
+    def train(self, val_losses, epochs, patience, optimizer="sgd", verbose=False):
+        # The validation losses of the epochs are given: evaluate is replaced, and keeps the weights after each epoch
+        np.random.seed(0)
+        rng = np.random.default_rng(9)
+        model = build_model("relu", "linear", "mse")
+        model.configure(loss="mse", optimizer=optimizer)
+        weights_after = []
+        output = io.StringIO()
+
+        def evaluate(inputs, targets):
+            weights_after.append(model.get_layers())
+            return val_losses[len(weights_after) - 1], None
+
+        with mock.patch.object(model, "evaluate", side_effect=evaluate), redirect_stdout(output):
+            model.train(rng.normal(0, 1, (8, NUM_INPUTS)), rng.normal(0, 1, (8, NUM_OUTPUTS)), epochs=epochs,
+                        learning_rate=0.1, batch_size=4, validation_data=([[0.0] * NUM_INPUTS], [[0.0] * NUM_OUTPUTS]),
+                        patience=patience, verbose=verbose)
+
+        self.output = output.getvalue()
+        return model, weights_after
+
+    def test_stops_after_patience_epochs_without_improvement(self):
+        # Best at epoch 2 (0.5); epochs 3 and 4 aren't better, so with patience 2 it stops after epoch 4
+        model, weights_after = self.train([1.0, 0.5, 0.7, 0.6, 0.4, 0.3], epochs=6, patience=2)
+
+        self.assertEqual(len(model.history["loss"]), 4)
+        self.assertEqual(model.history["best_epoch"], 2)
+        np.testing.assert_array_equal(model.layers[0]["weights"], weights_after[1][0]["weights"])  # back to epoch 2
+
+    def test_restores_the_best_epoch_without_stopping(self):
+        model, weights_after = self.train([1.0, 0.5, 0.7], epochs=3, patience=5)
+
+        self.assertEqual(len(model.history["loss"]), 3)
+        self.assertEqual(model.history["best_epoch"], 2)
+        np.testing.assert_array_equal(model.layers[0]["weights"], weights_after[1][0]["weights"])
+
+    def test_the_optimizer_goes_back_with_the_weights(self):
+        # 2 updates per epoch (8 samples in batches of 4): the best epoch, 2, ends after 4 updates
+        model, _ = self.train([1.0, 0.5, 0.7, 0.6], epochs=4, patience=2, optimizer="adam")
+        self.assertEqual(model.optimizer.t, 4)
+
+    def test_explains_a_validation_loss_that_is_never_a_number(self):
+        model, _ = self.train([np.nan] * 5, epochs=5, patience=2, verbose=True)
+
+        self.assertEqual(len(model.history["loss"]), 2)  # stops after patience epochs without a valid one
+        self.assertNotIn("best_epoch", model.history)
+        self.assertIn("the training diverged", self.output)
+
+    def test_needs_validation_data(self):
+        model = build_model("relu", "linear", "mse")
+
+        with self.assertRaises(ValueError):
+            model.train([[0.0] * NUM_INPUTS], [[0.0] * NUM_OUTPUTS], epochs=1, learning_rate=0.1, patience=2)
+
+
+class DropoutTest(unittest.TestCase):
+    def model(self, dropout):
+        np.random.seed(0)
+        model = FeedForward()
+        model.add_layer(num_inputs=NUM_INPUTS, num_neurons=NUM_HIDDEN, act_fn="relu", dropout=dropout)
+        model.add_layer(num_inputs=NUM_HIDDEN, num_neurons=NUM_OUTPUTS, act_fn="softmax", dropout=dropout)
+        model.configure(loss="categorical_crossentropy")
+        return model
+
+    def test_backpropagation_matches_numerical_gradients_with_the_same_mask(self):
+        # The same seed before every forward pass draws the same inputs to drop, so the loss is a fixed function of the
+        # weights, and its numerical gradient is what backward must give for that mask
+        model = self.model(dropout=0.5)
+        rng = np.random.default_rng(10)
+        inputs = rng.normal(0, 1, (NUM_SAMPLES, NUM_INPUTS))
+        targets = to_categorical(rng.integers(0, NUM_OUTPUTS, NUM_SAMPLES), num_classes=NUM_OUTPUTS)
+
+        def loss():
+            np.random.seed(5)
+            return loss_fn("categorical_crossentropy", targets, model.forward_layers(inputs, training=True))
+
+        np.random.seed(5)
+        predictions = model.forward_layers(inputs, training=True)
+        self.assertTrue(any((cache["mask"] == 0).any() for cache in model.cache))  # some inputs were dropped
+        actual = model.backward(model.output_delta(targets, predictions))
+
+        for layer, (grad_weights, grad_biases) in zip(model.layers, actual):
+            for params, grad in ((layer["weights"], grad_weights), (layer["biases"], grad_biases)):
+                for idx in np.ndindex(params.shape):
+                    original = params[idx]
+                    params[idx] = original + 1e-6
+                    loss_plus = loss()
+                    params[idx] = original - 1e-6
+                    loss_minus = loss()
+                    params[idx] = original
+                    self.assertAlmostEqual(grad[idx], (loss_plus - loss_minus) / 2e-6, delta=1e-6)
+
+    def test_drops_and_scales_the_inputs_only_while_training(self):
+        model = self.model(dropout=0.5)
+        inputs = np.ones((1000, NUM_INPUTS))
+
+        model.forward_layers(inputs, training=True)
+        kept = model.cache[0]["inputs"]
+        self.assertEqual(set(np.unique(kept)), {0.0, 2.0})  # dropped, or kept and scaled by 1 / (1 - 0.5)
+        self.assertAlmostEqual(kept.mean(), 1.0, delta=0.05)  # the expected value of each input is unchanged
+
+        # Predictions use every input as it is: the same as the model without dropout
+        without = FeedForward(layers=[{key: l[key] for key in ("weights", "biases", "act_fn")} for l in model.layers],
+                              configs=model.get_configs())
+        np.testing.assert_array_equal(model.predict(inputs[:5]), without.predict(inputs[:5]))
+
+    def test_training_applies_dropout(self):
+        model = self.model(dropout=0.5)
+
+        with mock.patch.object(model, "forward_layers", wraps=model.forward_layers) as forward, redirect_stdout(io.StringIO()):
+            model.train(np.ones((4, NUM_INPUTS)), to_categorical([0, 1, 2, 0], num_classes=NUM_OUTPUTS), epochs=1, learning_rate=0.1)
+
+        self.assertEqual(forward.call_args.kwargs, {"training": True})
+
+    def test_dropout_must_be_below_1(self):
+        for dropout in (-0.1, 1.0):
+            with self.subTest(dropout=dropout), self.assertRaises(ValueError):
+                FeedForward().add_layer(num_inputs=2, num_neurons=2, act_fn="relu", dropout=dropout)
+
+    def test_a_saved_layer_without_its_activation_doesnt_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filepath = os.path.join(directory, "model.joblib")
+            model = self.model(dropout=0.0)
+            model.save(filepath)
+
+            saved = load(filepath)
+            del saved["layers"][0]["act_fn"]
+            dump(saved, filepath)
+
+            with self.assertRaises(KeyError):
+                load_model(filepath)
+
+    def test_dropout_is_saved_with_the_model(self):
+        model = self.model(dropout=0.2)
+
+        with tempfile.TemporaryDirectory() as directory:
+            filepath = os.path.join(directory, "model.joblib")
+            model.save(filepath)
+            self.assertEqual([layer["dropout"] for layer in load_model(filepath).layers], [0.2, 0.2])
 
 
 class DatasetShapeTest(unittest.TestCase):

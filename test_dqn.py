@@ -318,6 +318,18 @@ class TrainDQNMetricsTest(DQNTrainingCase):
         # Saved for the initial model (2) and when the greedy reward improved (5 and 7), not for 3
         self.assertEqual(save.call_args_list, [mock.call(checkpoint)] * 3)
 
+    def test_training_shorter_than_eval_freq_is_evaluated_at_its_end(self):
+        save = mock.Mock(wraps=self.model.save)
+        self.model.save = save
+        checkpoint = os.path.join(self.directory.name, "checkpoint.joblib")
+
+        # 3 episodes with eval_freq=50: evaluated before the training (reward 2) and after the last episode (5)
+        eval_env = ScriptedEnv([(2, "terminated"), (5, "terminated")])
+        _, _, metrics = self.train(ScriptedEnv([(3, "terminated")] * 3), eval_env=eval_env, eval_freq=50, eval_episodes=1, checkpoint_filepath=checkpoint)
+
+        self.assertEqual([row["greedy_reward"] for row in metrics], ["", "", "5.0"])
+        self.assertEqual(save.call_count, 2)  # the initial model, then the trained one, which is better
+
     def test_mean_q_is_logged_when_the_model_trains(self):
         # The memory needs more than batch_size=2 transitions, so the training starts in the third episode
         _, _, metrics = self.train(ScriptedEnv([(1, "terminated")] * 4), batch_size=2)

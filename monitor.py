@@ -45,12 +45,14 @@ class Monitor:
         self.max_points = max_points  # older points of each metric are thinned out beyond this
         self.lock = threading.Lock()
         self.models = {}   # name -> what the dashboard shows about the model
+        self.attached = {} # name -> the model itself, for refresh
         self.metrics = {}  # name -> list of [x, value]
         self.axes = {}     # name -> what its x is (epoch, episode, iteration or step), when the values said it
         self.version = 0   # increases with every change, so the dashboard server knows when to send
 
     def attach(self, model, name):
         model.observers.append(ModelObserver(self, name))
+        self.attached[name] = model
 
         with self.lock:
             self.models[name] = {"forwards": 0, "updates": 0, "last_copy": 0.0, "activations": None,
@@ -68,15 +70,28 @@ class Monitor:
         if now - state["last_copy"] < self.min_interval:
             return
 
-        # The inputs, z and output of each layer, for the first samples of the batch (a single sample is one row)
+        self.copy_state(name, model)
+
+    # The inputs, z and output of each layer in the last forward pass, for the first samples of the batch (a single
+    # sample is one row), and the parameters
+    def copy_state(self, name, model):
+        state = self.models[name]
         activations = [{key: np.atleast_2d(cache[key])[:self.max_samples].copy() for key in ("inputs", "z", "output")}
                        for cache in model.cache]
 
         with self.lock:
-            state["activations"] = activations
-            state["last_copy"] = now
+            if activations:  # none before the first forward pass
+                state["activations"] = activations
+            state["last_copy"] = time.time()
             self.copy_parameters(name, model)
             self.version += 1
+
+    # Copies the current state of every model, without waiting for min_interval: the last copies can be older than
+    # the final weights (e.g. after early stopping goes back to the best epoch), and the dashboard keeps showing them
+    # when the script is done (see keep_dashboard_open in cli.py)
+    def refresh(self):
+        for name, model in self.attached.items():
+            self.copy_state(name, model)
 
     def record_update(self, name, model, gradients, learning_rate):
         state = self.models[name]

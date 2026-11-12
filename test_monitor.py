@@ -85,6 +85,18 @@ class MonitorTest(unittest.TestCase):
         for plain, observed in zip(trained(False), trained(True)):
             np.testing.assert_array_equal(plain, observed)
 
+    def test_refresh_copies_the_final_weights(self):
+        # After the last (throttled) copy, the weights change, e.g. when early stopping goes back to the best epoch
+        model = build_model()
+        monitor = Monitor(min_interval=1000)
+        monitor.attach(model, "net")
+        model.predict(self.inputs)
+        model.layers[0]["weights"] += 1.0
+
+        self.assertFalse(np.array_equal(monitor.models["net"]["layers"][0]["weights"], model.layers[0]["weights"]))
+        monitor.refresh()
+        np.testing.assert_array_equal(monitor.models["net"]["layers"][0]["weights"], model.layers[0]["weights"])
+
     def test_json_has_the_arrays(self):
         model = build_model()
         monitor = Monitor(min_interval=0)

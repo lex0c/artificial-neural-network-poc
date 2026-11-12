@@ -130,12 +130,24 @@ model towards it.
 | `mse` | mean of `(y_pred - y_true)^2` | regression |
 | `categorical_crossentropy` | `-sum(y_true * log(y_pred))`, with one-hot `y_true` | classification with a softmax output |
 | `sparse_categorical_crossentropy` | the same, with class indices as labels | classification with a softmax output |
+| `binary_crossentropy` | mean of `-(y_true * log(y_pred) + (1 - y_true) * log(1 - y_pred))`, with `y_true` 0 or 1 | yes/no answers with sigmoid outputs (one, or several independent ones) |
 
 Cross-entropy is minus the log of the probability given to the true class: close to 0 when that probability is close
 to 1, and very large when a confident prediction is wrong. The probabilities are clipped to `[1e-7, 1 - 1e-7]` so that
 `log(0)` can't happen; the derivatives ignore this clipping, so the gradient doesn't vanish when a prediction is
 completely wrong. With a softmax output, its gradient with respect to `z` simplifies to
 `(y_pred - y_true) / batch_size` (`softmax_crossentropy_delta`), which `output_delta` uses directly.
+
+Binary cross-entropy has the same shortcut with a sigmoid output, `(y_pred - y_true)` divided by the number of values
+(`sigmoid_binary_crossentropy_delta`). It matters most when the model is confidently wrong: with `mse`, the gradient
+of `z` of a sigmoid output is `2 (y_pred - y_true) * y_pred (1 - y_pred)`, and the last factor is almost 0 at both ends
+of the sigmoid. For an output of 0.0025 whose answer is 1, `mse` gives a gradient of -0.005 and binary cross-entropy
+-0.998.
+
+Each cross-entropy needs its output activation, and `configure` (and `train`) raise a `ValueError` otherwise: the
+categorical ones a softmax, the binary one a sigmoid. With another output they would train wrong without any error.
+For example, the categorical cross-entropy of a single sigmoid output is `-y_true * log(y_pred)`, which is 0 for every
+sample whose answer is 0, so nothing pushes `y_pred` down and the model learns to answer 1 for everything.
 
 Sigmoid and tanh saturate: for a large `|z|` their output is almost flat, so their derivative is close to 0 and the
 gradient fades as it goes back through many such layers. ReLU doesn't saturate for positive `z`, which is why it
@@ -147,6 +159,13 @@ The optimizer is the last step of `train_step`: it decides how the gradients cha
 
 - **SGD** (the default): `parameter = parameter - learning_rate * gradient`. The step is proportional to the gradient,
   so parameters with small gradients learn slowly, and one learning rate has to suit all of them.
+- **Momentum**: each parameter keeps a velocity, `velocity = 0.9 * velocity + gradient`, and moves by
+  `-learning_rate * velocity`. It keeps going where the gradients agree from step to step, and gradients that change
+  sign cancel out. A gradient that stays the same ends up moving the parameter 10 times as far as with SGD
+  (`1 / (1 - 0.9)`), so momentum needs a learning rate about 10 times smaller.
+- **RMSprop**: each parameter keeps the running mean of its squared gradients,
+  `mean_square = 0.9 * mean_square + 0.1 * gradient^2`, and moves by `-learning_rate * gradient / sqrt(mean_square)`:
+  a step of about `learning_rate`, whatever the scale of its gradients.
 - **Adam**: keeps, for each parameter, a running mean of its gradients (`m`, a momentum: steps keep their direction when
   the gradients agree) and of its squared gradients (`v`, how large its gradients usually are), and moves it by
   `learning_rate * m / sqrt(v)`. Dividing by `sqrt(v)` gives every parameter a step of about `learning_rate`, whatever
@@ -174,7 +193,14 @@ On MNIST (`train-mnist.py`, 3 seeds, 10 epochs, validation accuracy):
 | SGD, `learning_rate=0.001` | 58.6% | 81.2% | 89.8% | 87.3% |
 
 Adam learns more per epoch and doesn't need a learning rate tuned to the scale of the gradients: with Adam's
-`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though: the training took about 1.7 times as long (15 s against 9 s).
+`0.001`, SGD learns much more slowly (89.8% after 10 epochs). Each Adam update does more work, though: the training
+took about 1.7 times as long (15 s against 9 s).
+
+`compare-optimizers.py` trains the same network with the four optimizers over a range of learning rates, on 10,000
+MNIST images for 8 epochs, and plots `optimizers.png`. The best learning rate was 0.3 for SGD, 0.1 for momentum and
+0.003 for RMSprop and Adam: they differ by 100 times, so comparing optimizers with the same learning rate says little.
+With its best learning rate, every optimizer ended between 0.16 and 0.19 of validation loss, so a tuned SGD comes
+close; momentum and Adam got there fastest, with 0.25 after the first epoch against 0.48 for SGD.
 
 ### Weight initialization
 
@@ -219,6 +245,25 @@ classifier.add_layer(num_inputs=16, num_neurons=4, act_fn='softmax')
 classifier.configure(loss='categorical_crossentropy')
 ```
 
+`dropout` is a regularization of the inputs of a layer: `add_layer(..., dropout=0.2)` sets 20% of them to 0 at
+random in every training step, and multiplies the others by `1 / (1 - 0.2)` so their expected value doesn't change.
+A different random part of the inputs is missing in every step, so no neuron can rely on any one of them, and the
+network has to spread what it learns, which reduces overfitting. Predictions use every input. On MNIST, with dropout
+on the inputs of the output layer (`train-mnist.py --dropout`, 5 seeds):
+
+| | Test accuracy | Test loss |
+| --- | --- | --- |
+| No dropout, 10 epochs (the default) | 97.78% (97.68 to 97.88) | 0.075 |
+| No dropout, 20 epochs | 97.86% | 0.092 |
+| Dropout 0.2, 20 epochs | 98.03% (97.95 to 98.14) | 0.075 |
+| Dropout 0.5, 20 epochs | 97.77% | 0.080 |
+
+Without dropout, 10 more epochs barely change the accuracy and the test loss rises: the model overfits. With dropout
+0.2, every seed did better than every seed of the default, and the lowest validation loss came later (epochs 9 to 14
+instead of 5 to 9). Dropout 0.5 removes too much for a layer of 128 inputs: the training loss stays high.
+`train-breast-cancer.py` and `compare-regularization.py` compare dropout with early stopping and L2 on small datasets,
+where overfitting is stronger (see "Overfitting and regularization" in the README).
+
 ### Normalize the inputs
 
 Features with very different scales (e.g. a temperature around 20 and a humidity around 80) get very different
@@ -260,9 +305,13 @@ history = model.train(inputs, targets, epochs=500, learning_rate=0.01, batch_siz
   (default 1).
 - **validation_data**: optional `(inputs, targets)` not used for training. Its loss (and accuracy, for classification)
   is calculated after each epoch, to see whether the model generalizes or starts to overfit.
+- **patience**: early stopping, with `validation_data` (default None). The training stops when the validation loss
+  hasn't improved for `patience` epochs in a row, and the model goes back to the weights of the epoch with the lowest
+  validation loss, also when it runs all the epochs (and the optimizer to its state at that epoch). Past that epoch
+  the model starts to memorize the training data (overfitting), so `epochs` becomes only a limit.
 
-`train` returns `model.history`, with the loss of each epoch (`loss`) and the validation metrics (`val_loss`,
-`val_accuracy`).
+`train` returns `model.history`, with the loss of each epoch (`loss`), the validation metrics (`val_loss`,
+`val_accuracy`) and, with `patience`, the epoch whose weights the model kept (`best_epoch`).
 
 ### Evaluate
 
@@ -276,6 +325,8 @@ print(test_loss, test_accuracy)  # a small loss, and None: there is no accuracy 
 
 The accuracy depends on the output layer:
 
+- `binary_crossentropy`: each output is a yes/no answer (yes above 0.5), and the accuracy is the fraction of the
+  answers that are right.
 - **softmax**, several **sigmoid** outputs or class indices (`sparse_categorical_crossentropy`): the output with the
   highest value is the predicted class.
 - a single **sigmoid** output (binary classification): above 0.5 is class 1.
