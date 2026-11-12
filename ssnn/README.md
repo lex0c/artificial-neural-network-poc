@@ -21,7 +21,9 @@ decoder     p = softmax(W_y concat(x_t, g_t) + b_y)
 
 Only `k` of the `E` experts run, so an event touches about `k / E` of the expert weights, while every expert keeps its
 own state between the events of a session. The router is trained through the softmax of the selected experts, plus a
-balance loss on the softmax of all of them, which keeps it from always picking the same few.
+balance loss on the softmax of all of them, which keeps it from always picking the same few. With
+`router_gradient: "dense"` it also learns which experts to choose: for each expert left out of an event, an estimate
+of what adding it to the selection would do to the loss.
 
 ## Running
 
@@ -47,7 +49,7 @@ and the BLAS library and threads of each row, `train_capacity` in `reports/capac
 | --- | --- |
 | `config.py` | The default configuration, its checks and a hash to record with each result |
 | `model.py` | Router with top-k, experts, integrator, decoder and the state of a session |
-| `gradients.py` | The gradients of one event and over a sequence (through time), the balance loss of the router, L2 and gradient clipping |
+| `gradients.py` | The gradients of one event and over a sequence (through time), the dense router gradient, the balance loss of the router, L2 and gradient clipping |
 | `recurrent.py` | A dense tanh RNN and a GRU with backpropagation through time, and the SSNN with the same interface |
 | `tasks.py` | The data of experiments A, B and D |
 | `training.py` | Training on independent examples or on sequences, keeping the epoch with the lowest validation loss |
@@ -76,6 +78,13 @@ imports `feedforward.py`, which does.
 - **Gradients of one event, or through time**: for independent examples (experiments A and D), the states before the
   event are treated as constants. For sequences (experiment B), backpropagation through time goes back over every
   event, and an expert that didn't run passes its gradient back unchanged, as it kept its state.
+- **A gradient for the choice of the experts** (`router_gradient: "dense"`): the top-k choice isn't differentiable, so
+  the softmax of the selected experts only teaches the router how to share the weight among them. For each expert e
+  left out, the dense gradient takes the first-order change of the loss if e were added to the selection with a small
+  weight, through what e would read and write (with the gated write) and the gradient its state gets from the
+  following events, and pushes the logit of e up if that would lower the loss. It is an estimate: only the router
+  gets it, and the gradients of every other parameter stay exact. It costs computing what every expert would write, at
+  every event of the training (about 40% more training time with 32 experts), and nothing at inference.
 - **Fair comparisons**: every model, SSNN and baselines alike, trains on the same data with the same epochs,
   minibatches and learning rate, and ends with the parameters of its epoch with the lowest validation loss; the test
   set is used once, at the end.
@@ -206,6 +215,10 @@ QUERY) up to 30, and are tested on distances up to 200, which they never saw.
 - **RNN and GRUs**: a dense tanh RNN with 32 neurons (the work of one expert), and gated recurrent units with 32
   neurons, with as much work per event as the learned SSNN (28), and with 64.
 
+The GRUs of the first three comparisons below start with the bias of their update gate at 0, so they start by
+forgetting half of their state at every event. With the usual initialization, which makes them keep it, they beat the
+learned SSNN on both memory tasks: see [A GRU that keeps its state by default](#a-gru-that-keeps-its-state-by-default).
+
 Test accuracy with 8 registers, mean over seeds 7, 19 and 43:
 
 | Model | Numbers touched per event | Distance 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | NOOPs touching the memory |
@@ -235,6 +248,11 @@ What it shows:
   events. The router hasn't learned to keep the memory experts away from the noise: about one NOOP in three selects
   one of them. The top-k choice itself gets no gradient, so nothing tells the router not to pick an expert. The gated
   write makes each such event less harmful, but doesn't prevent them, and over 200 events the small damages add up.
+- With a single register and no noise, every model answers right at every distance, including the dense RNN, and even
+  the learned SSNN, whose NOOPs go through the memory expert most of the time: holding one bit against an input that
+  never changes is easy for any recurrent network. The noise and the number of registers are what make the task
+  discriminate.
+
 ### Training on longer gaps
 
 If the router leaks because the training never made a leak costly over a long gap, training on longer gaps should
@@ -248,8 +266,9 @@ router, the gated write and the GRUs, seeds 7, 19 and 43:
 | GRU (28), same work | 93.6% | 92.6% | 95.4% | 92.9% (91.7 to 94.7) | | |
 | GRU (64) | 77.8% | 74.3% | 78.4% | 77.1% | | |
 
-- **With the gated write, the SSNN now beats the GRU of the same work at every distance**, including those it never
-  saw: 97.1% against 92.9% from 101 to 200 events, and its worst seed is above the best seed of the GRU.
+- **With the gated write, the SSNN now beats the GRU of the same work at every distance** (a GRU that starts by
+  forgetting, see the note above), including those it never saw: 97.1% against 92.9% from 101 to 200 events, and its
+  worst seed is above the best seed of the GRU.
 - **The router learned to protect its memory, but not by avoiding it**: the NOOPs still select a memory expert 20% of
   the time, but with a small weight, so their mean write on it fell to 0.035, against 0.102 with the fixed write (whose
   write is always rho = 0.35 when selected). Protecting the memory needed both: the gated write, which gives the router
@@ -259,7 +278,7 @@ router, the gated write and the GRUs, seeds 7, 19 and 43:
 - **The GRU with 64 neurons didn't train well on the longer sequences** at this learning rate (0.003, the same for
   every model): on one seed its best epoch was the first, and it ended near chance; on the others it stopped improving
   around epoch 10. Trained on gaps up to 30 it had reached 98% at every distance, so this says nothing about its
-  capacity, only that its learning rate wasn't tuned for long sequences. The GRU of the same work trained steadily.
+  capacity. The learning rate wasn't the cause (next section); its initialization was (see the note above).
 
 ### Fair learning rates, longer tests and a harder task
 
@@ -292,17 +311,82 @@ registers holding one of 4 values each (a guess is right 25% of the time), with 
 - **The GRU with 64 neurons stays unstable on these long sequences** at both learning rates, below the GRU of the same
   work; trained on gaps up to 30 it had reached 98%.
 - **On the harder task, neither GRU got off the ground**: their validation loss stayed at ln 4 = 1.386, a constant
-  answer, through the 20 epochs. They might learn it with a longer training or a curriculum, which wasn't tried. The
-  SSNN learned part of it, about 70% on the trained distances, and the oracle all of it, at every distance: here too
-  the gap is the learned routing, not the architecture.
+  answer, through the 20 epochs. The SSNN learned part of it, about 70% on the trained distances, and the oracle all
+  of it, at every distance. The GRUs' failure came from their initialization, and the SSNN's gap from its learned
+  routing (next sections).
 
 These rows were run on the working tree of commit 48c4158 before it was committed (the code didn't change in between),
 so `reports/memory.csv` gives that commit for them.
 
-- With a single register and no noise, every model answers right at every distance, including the dense RNN, and even
-  the learned SSNN, whose NOOPs go through the memory expert most of the time: holding one bit against an input that
-  never changes is easy for any recurrent network. The noise and the number of registers are what make the task
-  discriminate.
+### Why the learned routing falls short
+
+A look at the routing of one trained gated SSNN (16 registers of 4 values, seed 7, learning rate 0.003; a diagnosis
+outside the reports): for 28% of the test sequences of 1 to 10 events, the QUERY selects none of the experts the last
+write of its register selected, and answers right only 54% of the time, against 80% when it does. The writes of the
+4 values of a register mostly go to different pairs of experts, so the value is in which expert was written as much
+as in its state, and the QUERY reads only some of them. A few experts serve many registers, which overwrite each other.
+
+That is what the router can't fix with the gradient of the selected experts alone: it learns how to share the weight
+between the 2 experts it picked, but nothing tells the QUERY of a register that another expert holds what it needs,
+or a write that the QUERY will read another expert.
+
+### A gradient for the choice of the experts
+
+The same comparison with `router_gradient: "dense"` (see the design choices): the gated SSNN, with an estimate for
+each expert left out of an event of what adding it would do to the loss. Same data, 20 epochs, learning rates 0.001
+and 0.003 kept by the validation loss of each seed (0.003 on every seed), mean test accuracy (worst seed):
+
+| Model | 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | 201 to 500 | Validation loss |
+| --- | --- | --- | --- | --- | --- | --- |
+| 16 registers of 4 values, dense router gradient | 81.1% (79.7) | 77.8% (73.0) | 80.6% (76.7) | 76.4% (75.3) | 66.2% (62.7) | 0.498 |
+| 16 registers of 4 values, selected experts only | 71.6% (66.3) | 71.3% (67.0) | 68.9% (65.0) | 59.8% (50.0) | 54.9% (47.0) | 0.767 |
+| 8 registers of 2 values, dense router gradient | 98.2% (97.0) | 97.9% (97.3) | 98.7% (98.3) | 98.3% (97.7) | 97.4% (96.3) | 0.044 |
+| 8 registers of 2 values, selected experts only | 98.6% (98.0) | 98.8% (98.3) | 98.1% (96.7) | 97.1% (96.7) | 93.7% (91.0) | 0.043 |
+
+- **On the harder task it gains 6 to 17 points at every distance**, and its worst seed is above the mean of the
+  selected-only gradient everywhere. In the diagnosis above, the QUERYs that read none of the experts of the last write
+  fell from 28% to 18%.
+- **On the easier one it changes less than a point within the trained distances, and holds the memory better beyond
+  them**: 97.4% against 93.7% from 201 to 500 events.
+- **It doesn't come from fewer leaks**: the NOOPs of the gaps of 101 to 200 events touch the memory more often (16%
+  against 12% with 16 registers, 31% against 20% with 8), with a mean write on it of 0.028 and 0.055 (against 0.021
+  and 0.035). What improved is that the QUERY finds the expert of the write.
+- **It still trains slowly**: its best epoch was the 16th to the 20th of 20 on every seed, and it stays far from the
+  oracle (100% at every distance) on the harder task.
+
+### A GRU that keeps its state by default
+
+The GRUs above start with the bias of the update gate at 0, so z starts around 0.5: each event keeps half of the state,
+and the gradient of an old state halves at every event. Trained 60 epochs instead of 20, those GRUs still didn't leave
+chance on the harder task (their best epoch was again the 1st to the 4th); in a run that printed it, the training loss
+fell while the validation loss rose, so they memorized the training sequences instead of learning to remember. The
+usual initialization for long memories starts that bias positive. With 2 (z around 0.88, `--gru-update-bias 2`), the
+same protocol (20 epochs, learning rate kept by validation, 0.003 on every seed):
+
+| Model | Numbers touched per event | 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | 201 to 500 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **8 registers of 2 values** | | | | | | |
+| GRU (28), same work, update bias 2 | 5,332 | 99.8% (99.3) | 99.9% (99.7) | 100% | 100% | 99.7% (99.3) |
+| GRU (64), update bias 2 | 19,012 | 100% | 100% | 100% | 100% | 99.9% (99.7) |
+| SSNN, gated, dense router gradient | 5,412 | 98.2% (97.0) | 97.9% (97.3) | 98.7% (98.3) | 98.3% (97.7) | 97.4% (96.3) |
+| **16 registers of 4 values** | | | | | | |
+| SSNN, oracle | 4,392 | 100% | 100% | 100% | 100% | 100% |
+| GRU (32), same work, update bias 2 | 12,200 | 86.4% (83.3) | 86.7% (86.3) | 88.8% (87.0) | 87.9% (84.3) | 87.6% (79.7) |
+| GRU (64), update bias 2 | 30,184 | 87.7% (86.0) | 88.3% (85.7) | 91.1% (89.0) | 89.6% (87.7) | 92.1% (89.0) |
+| SSNN, gated, dense router gradient | 12,200 | 81.1% (79.7) | 77.8% (73.0) | 80.6% (76.7) | 76.4% (75.3) | 66.2% (62.7) |
+
+- **With it, the GRU of the same work beats the learned SSNN on both tasks, at every distance**: by 1.3 to 2.3 points
+  with 8 registers, where it is nearly perfect, and by 5 to 21 points with 16 registers of 4 values. The comparisons
+  above where the learned SSNN came ahead were against GRUs that start by forgetting.
+- **The GRU with 64 neurons trains well too**, at 0.003: its instability on long sequences came from the same
+  initialization.
+- **The oracle stays above every model**: 100% at every distance on the harder task with about a third of the work of
+  the GRU of the same work, where the GRUs reach 86 to 92%. The architecture can hold such a memory; a learned router
+  doesn't find the routing that does it.
+
+The rows of the last two sections were also run before their code was committed, on working trees identical to commit
+e9b567a (the dense router gradient, and the GRUs trained 60 epochs) and 5d14da9 (the GRUs with the update bias), so
+`reports/memory.csv` gives those commits for them.
 
 ## Status of the hypotheses
 
@@ -311,8 +395,8 @@ so `reports/memory.csv` gives that commit for them.
 | Running k of E experts reduces the computation per event | supported: the cost per event barely depends on E, 30 times less than running all 128 experts |
 | That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event in Python |
 | The stored capacity buys quality | not supported in experiment D, where the SSNN stays below dense networks of the same work; the task turned out to be limited by data, so a larger version is still open |
-| Persistent states help on tasks that need memory | supported: with the right routing, perfect memory at every distance (up to 500 events) with the least work; with a learned router, the gated write and long gaps in the training, above a GRU of the same work up to 200 events and level with it beyond, and the only learned model that got off the ground on 16 registers of 4 values |
-| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it learns to protect its memory with the gated write, by writing little to it rather than avoiding it |
+| Persistent states help on tasks that need memory | supported only with the right routing: chosen by hand, perfect memory at every distance (up to 500 events) with the least work, above GRUs with 7 times the work. Not with a learned router: a GRU of the same work, initialized to keep its state, beats the learned SSNN on both memory tasks, even with the dense router gradient |
+| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it learns to protect its memory with the gated write, by writing little to it rather than avoiding it, but not to give each register experts that its writes and its QUERY share. The dense router gradient helps (6 to 17 points on the harder task) without closing the gap |
 
 ## Conclusion so far
 
@@ -323,19 +407,25 @@ Experiments A and D (independent examples) and the latency benchmark go against 
 doing the same work per event, it loses on accuracy and on speed. Its stored capacity didn't buy quality, and the
 specialization even cost accuracy in experiment D, as each expert learns from only part of the data.
 
-Experiment B (memory) is where the architecture shows what it is for: experts that don't run keep their state exactly,
-which gives a memory that neither fades nor gets disturbed, at a low cost per event. With the right routing it
-remembers perfectly, at every distance and on every task tried. With a learned router, the gated write and long gaps
-in the training, it beat a GRU of the same work on 8 registers up to 200 events, and was the only learned model to
-make progress on 16 registers of 4 values. But the learned routing stays far from the oracle on the harder task, and
-its memory fades over gaps much longer than those it trained on.
+Experiment B (memory) shows what the architecture is for, and what it lacks. Experts that don't run keep their state
+exactly: with the routing chosen by hand, the SSNN remembers perfectly, at every distance and on every task tried,
+with less work per event than any other model, and above GRUs with 7 times its work on the harder task. But a
+learned router doesn't find that routing. A gradient for the choice of the experts (the dense router gradient) took
+the learned SSNN from about 70% to about 80% on the harder task, and kept it at 97% over gaps 5 times longer than in
+training on the easier one. Still, a GRU of the same work, with the usual initialization that makes it keep its state,
+beats it on both: 99.7 to 100% against 97 to 99% with 8 registers, 86 to 89% against 66 to 81% with 16 registers of
+4 values. The earlier comparisons where the learned SSNN came ahead were against GRUs that start by forgetting.
 
-What stays open, in the order it would be worth testing:
+So the SSNN, as it stands, isn't a better memory than a well-initialized GRU; its routing, if it could be learned,
+would be. What stays open, in the order it would be worth testing:
 
-1. **A better learned routing**, the gap between the oracle and the learned SSNN: gradients for the top-k choice itself
-   (straight-through estimates or REINFORCE), longer trainings, a curriculum of growing gaps.
-2. **Fairer dense baselines on the hardest task**: GRUs or LSTMs with a longer training or a curriculum, to tell
-   whether they can't learn it or just learn it more slowly.
+1. **An input that names the register**: in this task, each pair of register and value, and each QUERY, is an input
+   feature of its own, so nothing is common to the writes and the QUERY of a register, and the router has to align 5
+   unrelated columns of its weights by trial and error. In a real memory the key would be a feature of its own. With
+   one, a linear router could route by it: that would tell whether the learned routing fails because of the router or
+   because of the encoding.
+2. **A longer training of the SSNN** (its best epoch was the last or nearly on every seed, where the GRUs peaked
+   around the 10th), and other estimates for the choice of the experts (REINFORCE, a straight-through top-k).
 3. **Capacity at a larger scale**, and **speed** (compiled code, routing with locality, grouping the events of many
    sessions by expert), which matters only where the SSNN is better: in Python, an SSNN event still takes 2 to 4
    times as long as a dense network doing the same work.
