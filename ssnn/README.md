@@ -30,11 +30,13 @@ From the root of the repository:
 ```sh
 python -m unittest discover -s ssnn/tests -t .      # the tests of the SSNN (python -m unittest runs them too)
 python -m ssnn.scripts.train_static --seeds 7 19 43 # experiment A: about 6 minutes per seed
+python -m ssnn.scripts.bench_cpu                    # the latency benchmark: about 6 minutes
 ```
 
 `train_static` adds one row per model and seed to `reports/experiments.csv`, with the configuration hash, the commit,
 the versions and `OPENBLAS_NUM_THREADS`, so every result can be traced to the code and the setup that gave it. The
-results below came from `OPENBLAS_NUM_THREADS=1`.
+results below came from `OPENBLAS_NUM_THREADS=1`. `bench_cpu` does the same in `reports/benchmark.csv`, with the CPU
+and the BLAS library and threads of each row.
 
 ## Organization
 
@@ -47,7 +49,9 @@ results below came from `OPENBLAS_NUM_THREADS=1`.
 | `training.py` | Training on independent examples, keeping the epoch with the lowest validation loss |
 | `metrics.py` | Accuracy, accuracy by regime and how the router uses the experts |
 | `baselines.py` | Dense MLPs sized like the SSNN |
+| `inference.py` | Lean engines for inference, one event at a time: the selective SSNN, all its experts, and a dense RNN |
 | `scripts/train_static.py` | Experiment A, with its baselines and ablations |
+| `scripts/bench_cpu.py` | The latency benchmark of the engines |
 
 It shares `activations.py` (stable softmax), `optimizers.py` (Adam), `progress.py` and `gradcheck.py` with the rest of
 the repository. Those modules keep float32 values in float32 and don't limit the BLAS threads; only `baselines.py`
