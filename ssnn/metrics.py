@@ -42,17 +42,25 @@ def routing_summary(selected, num_experts, groups=None):
     return summary
 
 
-# How often the gaps of a memory task disturbed the memory, from the traces of an SSNN over each sequence: the share
-# of the NOOP events after the last write that selected one of the experts the final QUERY reads. Those events
-# overwrite part of the state the answer depends on; with a right routing (an oracle) it is 0.
-def memory_leak(traces_by_sequence, inputs_by_sequence, distances, noop_index):
-    touched, noops = 0, 0
+# How much the gaps of a memory task disturbed the memory, from the traces of an SSNN over each sequence, over the NOOP
+# events after the last write:
+#   touched  the share of them that selected one of the experts the final QUERY reads: those overwrite part of the
+#            state the answer depends on (0 with a right routing, an oracle)
+#   write    the mean write strength they applied to those experts (rho times its weight with the gated write, rho
+#            otherwise, summed over the read experts they selected): how much they overwrote
+def memory_leak(traces_by_sequence, inputs_by_sequence, distances, noop_index, config):
+    from ssnn.model import write_strength
+
+    touched, written, noops = 0, 0.0, 0
 
     for traces, inputs, distance in zip(traces_by_sequence, inputs_by_sequence, distances):
         read = set(np.asarray(traces[-1]["selected"]).tolist())
         for trace, x in zip(traces[-distance:-1], inputs[-distance:-1]):  # the events between the last write and the QUERY
             if x[noop_index] == 1:
                 noops += 1
-                touched += bool(read & set(np.asarray(trace["selected"]).tolist()))
+                strengths = [write_strength(config, float(weight))
+                             for expert, weight in zip(np.asarray(trace["selected"]).tolist(), trace["weights"]) if expert in read]
+                touched += bool(strengths)
+                written += sum(strengths)
 
-    return touched / noops if noops else 0.0
+    return {"touched": touched / noops if noops else 0.0, "write": written / noops if noops else 0.0}

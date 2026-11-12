@@ -30,12 +30,16 @@ from ssnn.training import evaluate_sequences, train_sequences
 #
 #   python -m ssnn.scripts.train_memory --seeds 7 19 43
 
+MODEL_KEYS = ("oracle", "learned", "gated", "gated-unbalanced", "rnn", "gru", "gru-same-work", "gru-64")
+
 parser = argparse.ArgumentParser(description="Experiment B of the SSNN: remembering registers across long, noisy gaps.")
 parser.add_argument("--registers", type=positive_int, default=8, help="registers of one bit (default: 8)")
 parser.add_argument("--noise", type=int, default=8, help="noise features on the NOOPs (default: 8)")
 parser.add_argument("--seeds", type=int, nargs="+", default=[7, 19, 43], help="seeds of the data and models (default: 7 19 43)")
 parser.add_argument("--epochs", type=positive_int, default=20, help="epochs of every model (default: 20)")
 parser.add_argument("--learning-rate", type=float, default=0.003, help="learning rate of every model (default: 0.003)")
+parser.add_argument("--max-distance", type=positive_int, default=30, help="largest distance of the training sequences (default: 30)")
+parser.add_argument("--models", nargs="+", choices=MODEL_KEYS, default=list(MODEL_KEYS), help="models to train (default: all)")
 parser.add_argument("--report", default=os.path.join(REPORTS, "memory.csv"), help="CSV file the results are added to")
 args = parser.parse_args()
 
@@ -51,25 +55,29 @@ def ssnn(seed, **changes):
     return SequenceSSNN(SSNN(config)), config
 
 
+# The models chosen with --models, in this order: (name, model, configuration of an SSNN or None)
 def models(seed):
     oracle = ssnn(seed, num_experts=args.registers + 1, top_k=1, router="fixed", fixed_routes=task.oracle_routes())
     learned = ssnn(seed, num_experts=16, top_k=2)
     gated = ssnn(seed, num_experts=16, top_k=2, write="gated")
     gated_unbalanced = ssnn(seed, num_experts=16, top_k=2, write="gated", balance_weight=0.0)
     same_work = gru_hidden_for(learned[0].touched, task.input_dim, NUM_CLASSES)
-    return [("ssnn, oracle routing", *oracle), ("ssnn, learned router", *learned), ("ssnn, gated write", *gated),
-            ("ssnn, gated, no balance", *gated_unbalanced),
-            ("rnn (32)", TanhRNN(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
-            ("gru (32)", GRU(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
-            (f"gru ({same_work}), same work", GRU(task.input_dim, same_work, NUM_CLASSES, seed=seed), None),
-            ("gru (64)", GRU(task.input_dim, 64, NUM_CLASSES, seed=seed), None)]
+    all_models = {
+        "oracle": ("ssnn, oracle routing", *oracle), "learned": ("ssnn, learned router", *learned),
+        "gated": ("ssnn, gated write", *gated), "gated-unbalanced": ("ssnn, gated, no balance", *gated_unbalanced),
+        "rnn": ("rnn (32)", TanhRNN(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
+        "gru": ("gru (32)", GRU(task.input_dim, STATE_DIM, NUM_CLASSES, seed=seed), None),
+        "gru-same-work": (f"gru ({same_work}), same work", GRU(task.input_dim, same_work, NUM_CLASSES, seed=seed), None),
+        "gru-64": ("gru (64)", GRU(task.input_dim, 64, NUM_CLASSES, seed=seed), None),
+    }
+    return [all_models[key] for key in MODEL_KEYS if key in args.models]
 
 
 results = []
-print(f"{args.registers} registers, {args.noise} noise features, distances up to 30 to train")
+print(f"{args.registers} registers, {args.noise} noise features, distances up to {args.max_distance} to train")
 
 for seed in args.seeds:
-    train, val, tests = experiment_memory(seed, task)
+    train, val, tests = experiment_memory(seed, task, max_distance=args.max_distance)
     print(f"\nSeed {seed}: test accuracy by distance from the last write")
     print(f"  {'model':28s} {'/event':>7}   " + "   ".join(f"{low:>3}-{high:<3}" for low, high in tests) + "     time")
 
@@ -81,23 +89,26 @@ for seed in args.seeds:
         accuracies = {distances: evaluate_sequences(model, examples)[1] for distances, examples in tests.items()}
         results.append((name, accuracies))
 
-        # For an SSNN, the share of the NOOPs of the longest gaps that touched the experts the QUERY reads
-        leak = ""
+        # For an SSNN, how much the NOOPs of the longest gaps touched and overwrote the experts the QUERY reads
+        leak = {"touched": "", "write": ""}
         if isinstance(model, SequenceSSNN):
             longest = tests[max(tests)]
             leak = memory_leak([model.forward(inputs)[1] for inputs, _, _ in longest], [inputs for inputs, _, _ in longest],
-                               [distance for _, _, distance in longest], task.noop_index)
+                               [distance for _, _, distance in longest], task.noop_index, config)
 
         print(f"  {name:28s} {model.touched:>7,}   " + "   ".join(f"{value * 100:6.1f}%" for value in accuracies.values())
-              + f"   {seconds:5.0f}s" + (f"   memory touched by {leak * 100:.0f}% of the long NOOPs" if leak != "" else ""))
+              + f"   {seconds:5.0f}s" + (f"   memory touched by {leak['touched'] * 100:.0f}% of the long NOOPs, "
+                                               f"mean write {leak['write']:.3f}" if leak["touched"] != "" else ""))
         append_row(args.report, {
             "date": datetime.now().isoformat(timespec="seconds"), "experiment": "B", "registers": args.registers,
             "noise": args.noise, "seed": seed, "config": config_hash(config) if config else "", "model": name,
             "touched_per_event": model.touched, "epochs": args.epochs, "learning_rate": args.learning_rate,
+            "max_distance": args.max_distance,
             "best_epoch": history["best_epoch"], "val_loss": min(history["val_loss"]),
             "val_accuracy": max(history["val_accuracy"]),
             **{f"accuracy_{low}_{high}": value for (low, high), value in accuracies.items()},
-            "memory_leak_101_200": leak, "seconds": seconds, **ENVIRONMENT})
+            "memory_leak_101_200": leak["touched"], "memory_write_101_200": leak["write"], "seconds": seconds,
+            **ENVIRONMENT})
 
 if len(args.seeds) > 1:
     print(f"\nMean over {len(args.seeds)} seeds:")

@@ -163,16 +163,23 @@ class MemoryTrainingTest(unittest.TestCase):
         self.assertFalse(np.allclose(trained[0.0], trained[1.0]))
 
     def test_memory_leak(self):
-        # A write, three NOOPs and a QUERY that reads expert 0: the second NOOP selected it, the others didn't
+        # A write, three NOOPs and a QUERY that reads expert 0: the second NOOP selected it with weight 0.25, the others
+        # didn't. With the gated write it wrote rho * 0.25 to it, with the fixed one rho.
         inputs = bit_sequence("1", ".", ".", ".", "?")
-        traces = [{"selected": [0]}, {"selected": [1]}, {"selected": [1, 0]}, {"selected": [2]}, {"selected": [0, 3]}]
-        self.assertAlmostEqual(memory_leak([traces], [inputs], [4], BIT.noop_index), 1 / 3)
+        traces = [{"selected": [0], "weights": [1.0]}, {"selected": [1], "weights": [1.0]},
+                  {"selected": [1, 0], "weights": [0.75, 0.25]}, {"selected": [2], "weights": [1.0]},
+                  {"selected": [0, 3], "weights": [0.5, 0.5]}]
+        for write, strength in (("fixed", 0.35), ("gated", 0.35 * 0.25)):
+            leak = memory_leak([traces], [inputs], [4], BIT.noop_index, make_config(write=write))
+            self.assertAlmostEqual(leak["touched"], 1 / 3)
+            self.assertAlmostEqual(leak["write"], strength / 3)
 
         # The oracle never touches the memory in the gaps
         model = SequenceSSNN(SSNN(make_config(input_dim=4, state_dim=4, num_experts=2, top_k=1, router="fixed", fixed_routes=ORACLE)))
         examples = BIT.examples(5, (2, 9), np.random.default_rng(6))
         traces = [model.forward(inputs)[1] for inputs, _, _ in examples]
-        self.assertEqual(memory_leak(traces, [e[0] for e in examples], [e[2] for e in examples], BIT.noop_index), 0.0)
+        leak = memory_leak(traces, [e[0] for e in examples], [e[2] for e in examples], BIT.noop_index, model.model.config)
+        self.assertEqual(leak, {"touched": 0.0, "write": 0.0})
 
     def test_gru_size_for_a_budget(self):
         for target in (1258, 5000):
