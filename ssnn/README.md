@@ -388,6 +388,40 @@ The rows of the last two sections were also run before their code was committed,
 e9b567a (the dense router gradient, and the GRUs trained 60 epochs) and 5d14da9 (the GRUs with the update bias), so
 `reports/memory.csv` gives those commits for them.
 
+### An input that names the register
+
+In this task, each pair of register and value, and each QUERY, is an input feature of its own: nothing is common to
+the writes and the QUERY of a register, and the router has to align 5 unrelated columns of its weights. In a real
+memory, the key would be a feature of its own. The same comparison on 16 registers of 4 values with `--encoding keyed`:
+the register is a feature shared by its writes and its QUERY, and the value and the operation are others (31 inputs
+instead of 89, so every model is smaller). GRUs with an update bias of 2, the same protocol, mean test accuracy (worst
+seed):
+
+| Model | Numbers touched per event | 1 to 10 | 11 to 30 | 31 to 100 | 101 to 200 | 201 to 500 | Validation loss |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SSNN, oracle | 2,304 | 100% | 100% | 100% | 100% | 100% | 0.001 |
+| SSNN, gated write | 6,400 | 96.8% (92.3) | 95.8% (91.7) | 92.7% (87.0) | 89.4% (85.3) | 80.9% (70.3) | 0.129 |
+| SSNN, gated, dense router gradient | 6,400 | 88.4% (81.3) | 87.1% (76.7) | 85.1% (74.7) | 83.1% (72.3) | 71.6% (53.3) | 0.319 |
+| GRU (32), same work | 6,400 | 91.1% (89.7) | 89.8% (88.0) | 91.7% (87.3) | 89.1% (88.3) | 90.4% (85.7) | 0.318 |
+| GRU (64) | 18,816 | 92.9% (87.7) | 93.2% (87.7) | 95.1% (91.7) | 93.1% (89.3) | 85.7% (81.0) | 0.214 |
+
+- **The encoding was most of the gap**: the gated SSNN went from 71.6% to 96.8% from 1 to 10 events, and from 54.9% to
+  80.9% from 201 to 500, while the GRU of the same work gained 5 points or less.
+- **Now the learned SSNN beats the GRU of the same work up to 100 events**, by 1 to 6 points, ties with it from 101 to
+  200 (89.4% against 89.1%), and has the lowest validation loss of all the learned models. Beyond the trained
+  distances its memory fades faster: 80.9% against 90.4% from 201 to 500, with the NOOPs of the long gaps touching
+  the memory 19% of the time.
+- **Its seeds are bimodal**: a seed either finds a routing close to the oracle's, with a validation loss around 0.02
+  and 94 to 95% even from 201 to 500 events, or falls well short of it. One seed in three found it with each router
+  gradient (seed 19 with the selected-only one, seed 7 with the dense one), so the difference between their means is
+  mostly which seeds found it: 3 seeds don't tell which gradient is better here. One GRU with 64 neurons got close
+  too (seed 43, validation loss 0.024, above 99% up to 200 events).
+- **The SSNNs were still improving at the 20th epoch** (best epochs 16 to 20), while the GRUs of the same work peaked
+  between the 6th and the 9th at 0.003 and then overfit.
+
+These rows were run on the working tree of commit a0c67c4 before it was committed (the code didn't change in between),
+so `reports/memory.csv` gives that commit for them.
+
 ## Status of the hypotheses
 
 | Hypothesis | Status |
@@ -395,8 +429,8 @@ e9b567a (the dense router gradient, and the GRUs trained 60 epochs) and 5d14da9 
 | Running k of E experts reduces the computation per event | supported: the cost per event barely depends on E, 30 times less than running all 128 experts |
 | That sparsity makes inference faster on a CPU, at a similar quality | not supported at this scale: 2 to 4 times slower than a dense RNN doing the same work per event in Python |
 | The stored capacity buys quality | not supported in experiment D, where the SSNN stays below dense networks of the same work; the task turned out to be limited by data, so a larger version is still open |
-| Persistent states help on tasks that need memory | supported only with the right routing: chosen by hand, perfect memory at every distance (up to 500 events) with the least work, above GRUs with 7 times the work. Not with a learned router: a GRU of the same work, initialized to keep its state, beats the learned SSNN on both memory tasks, even with the dense router gradient |
-| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it learns to protect its memory with the gated write, by writing little to it rather than avoiding it, but not to give each register experts that its writes and its QUERY share. The dense router gradient helps (6 to 17 points on the harder task) without closing the gap |
+| Persistent states help on tasks that need memory | supported with the right routing: chosen by hand, perfect memory at every distance (up to 500 events) with the least work, above GRUs with 7 times the work. With a learned router, it depends on the input: when the input names the register, the SSNN beats a GRU of the same work up to 100 events, with the lowest validation loss, but not beyond 200; when each write is a feature of its own, a GRU of the same work initialized to keep its state beats it at every distance |
+| A learned routing specializes the experts | supported in experiments A and D (far above random routing, with regime information well above its bias), with partial specialization; in experiment B it learns to protect its memory with the gated write, by writing little to it rather than avoiding it, but, with one input feature per write, not to give each register experts that its writes and its QUERY share (the dense router gradient helps, by 6 to 17 points, without closing the gap). With an input that names the register, one seed in three finds a routing close to the oracle's |
 
 ## Conclusion so far
 
@@ -409,23 +443,27 @@ specialization even cost accuracy in experiment D, as each expert learns from on
 
 Experiment B (memory) shows what the architecture is for, and what it lacks. Experts that don't run keep their state
 exactly: with the routing chosen by hand, the SSNN remembers perfectly, at every distance and on every task tried,
-with less work per event than any other model, and above GRUs with 7 times its work on the harder task. But a
-learned router doesn't find that routing. A gradient for the choice of the experts (the dense router gradient) took
-the learned SSNN from about 70% to about 80% on the harder task, and kept it at 97% over gaps 5 times longer than in
-training on the easier one. Still, a GRU of the same work, with the usual initialization that makes it keep its state,
-beats it on both: 99.7 to 100% against 97 to 99% with 8 registers, 86 to 89% against 66 to 81% with 16 registers of
-4 values. The earlier comparisons where the learned SSNN came ahead were against GRUs that start by forgetting.
+with less work per event than any other model, and above GRUs with 7 times its work on the harder task. Whether a
+learned router finds that routing depends on the input:
 
-So the SSNN, as it stands, isn't a better memory than a well-initialized GRU; its routing, if it could be learned,
-would be. What stays open, in the order it would be worth testing:
+- When each write of a register and a value is an input feature of its own, it doesn't. A gradient for the choice of
+  the experts (the dense router gradient) took the learned SSNN from about 70% to about 80% on the harder task, but a
+  GRU of the same work, with the usual initialization that makes it keep its state, beats it at every distance:
+  99.7 to 100% against 97 to 99% with 8 registers, 86 to 89% against 66 to 81% with 16 registers of 4 values. The
+  earlier comparisons where the learned SSNN came ahead were against GRUs that start by forgetting.
+- When the input names the register, as the key of a memory would, the learned SSNN beats the GRU of the same work up
+  to 100 events (93 to 97% against 90 to 92%) with the lowest validation loss of all the learned models, and one seed
+  in three finds a routing close to the oracle's. Beyond the distances it trained on, its memory fades faster than the
+  GRU's.
 
-1. **An input that names the register**: in this task, each pair of register and value, and each QUERY, is an input
-   feature of its own, so nothing is common to the writes and the QUERY of a register, and the router has to align 5
-   unrelated columns of its weights by trial and error. In a real memory the key would be a feature of its own. With
-   one, a linear router could route by it: that would tell whether the learned routing fails because of the router or
-   because of the encoding.
-2. **A longer training of the SSNN** (its best epoch was the last or nearly on every seed, where the GRUs peaked
-   around the 10th), and other estimates for the choice of the experts (REINFORCE, a straight-through top-k).
+So the SSNN can be the better memory, at the same work per event, when its input says what to remember and within the
+distances it trained on; a well-initialized GRU stays the safer choice otherwise. What stays open, in the order it
+would be worth testing:
+
+1. **More seeds and longer trainings on the keyed task**: how often a seed finds the routing of the oracle, whether
+   more epochs get the others there (the SSNNs were still improving at the 20th), and which router gradient helps.
+2. **Why the learned memory fades beyond the trained distances**: the NOOPs of the long gaps still touch the memory
+   experts about one time in five, with a small write that adds up.
 3. **Capacity at a larger scale**, and **speed** (compiled code, routing with locality, grouping the events of many
    sessions by expert), which matters only where the SSNN is better: in Python, an SSNN event still takes 2 to 4
    times as long as a dense network doing the same work.
