@@ -69,28 +69,30 @@ def experiment_capacity(seed, num_regimes, per_regime=(400, 100, 100)):
     return [capacity_examples(size * num_regimes, teachers, rng) for size, rng in zip(per_regime, generators)]
 
 
-# Experiment B: memory. A set of hidden registers of one bit each. A sequence first writes every register, then the
+# Experiment B: memory. A set of hidden registers, each holding one of `values` values (2 by default: one bit). A
+# sequence first writes every register, then the
 # register it will ask for once more, then has a gap of NOOP events, with a rewrite of another register now and then,
 # and ends with a QUERY of that register, whose answer is the last value written to it. The NOOPs carry noise features
 # that don't matter, which a dense recurrent network still has to keep out of its state. The distance is the number of
 # events from the last write of the queried register to the QUERY.
 #
-# The inputs: one-hot over the commands, SET(i, 0) and SET(i, 1) for each register, QUERY(i) and NOOP, followed by the
-# noise features (non-zero only on the NOOPs). With 1 register and no noise, it is a single bit to remember.
+# The inputs: one-hot over the commands, SET(i, v) for each register and value, QUERY(i) and NOOP, followed by the
+# noise features (non-zero only on the NOOPs). The answer is one of the values: a class. With 1 register of one bit and
+# no noise, it is a single bit to remember.
 class MemoryTask:
-    def __init__(self, registers=8, noise=8, rewrite_rate=0.1):
-        self.registers, self.noise, self.rewrite_rate = registers, noise, rewrite_rate
-        self.input_dim = 3 * registers + 1 + noise
-        self.noop_index = 3 * registers
+    def __init__(self, registers=8, noise=8, rewrite_rate=0.1, values=2):
+        self.registers, self.noise, self.rewrite_rate, self.values = registers, noise, rewrite_rate, values
+        self.input_dim = (values + 1) * registers + 1 + noise
+        self.noop_index = (values + 1) * registers
 
     def set_event(self, register, value):
         x = np.zeros(self.input_dim, np.float32)
-        x[2 * register + value] = 1
+        x[self.values * register + value] = 1
         return x
 
     def query_event(self, register):
         x = np.zeros(self.input_dim, np.float32)
-        x[2 * self.registers + register] = 1
+        x[self.values * self.registers + register] = 1
         return x
 
     def noop_event(self, rng):
@@ -100,7 +102,7 @@ class MemoryTask:
         return x
 
     def sequence(self, rng, distance):
-        values = rng.integers(0, 2, self.registers)
+        values = rng.integers(0, self.values, self.registers)
         events = [self.set_event(i, values[i]) for i in rng.permutation(self.registers)]
         target = int(rng.integers(0, self.registers))
         events.append(self.set_event(target, values[target]))  # its last write, distance events before the QUERY
@@ -109,7 +111,7 @@ class MemoryTask:
         for _ in range(distance - 1):
             if others and rng.random() < self.rewrite_rate:
                 other = int(rng.choice(others))
-                values[other] = rng.integers(0, 2)
+                values[other] = rng.integers(0, self.values)
                 events.append(self.set_event(other, values[other]))
             else:
                 events.append(self.noop_event(rng))
@@ -124,13 +126,14 @@ class MemoryTask:
     # The routing an oracle would choose, for a fixed router with k = 1: expert i for the writes and the QUERY of
     # register i, and one more expert for the NOOPs (whatever their largest feature)
     def oracle_routes(self):
-        return ([[i // 2] for i in range(2 * self.registers)] + [[i] for i in range(self.registers)]
+        return ([[i // self.values] for i in range(self.values * self.registers)] + [[i] for i in range(self.registers)]
                 + [[self.registers]] * (1 + self.noise))
 
 
-# Training and validation with distances up to 30; tests with distances up to 30 and beyond, which the training never
-# saw: 31 to 100 and 101 to 200
-MEMORY_TEST_DISTANCES = ((1, 10), (11, 30), (31, 100), (101, 200))
+# Training and validation with distances up to 30 (or max_distance); tests with distances up to 30 and beyond, which
+# the training may never have seen: 31 to 100, 101 to 200 and 201 to 500. Each range has a random generator of its
+# own, so adding one doesn't change the others.
+MEMORY_TEST_DISTANCES = ((1, 10), (11, 30), (31, 100), (101, 200), (201, 500))
 
 
 def experiment_memory(seed, task, sizes=(2000, 500), test_size=300, max_distance=30):

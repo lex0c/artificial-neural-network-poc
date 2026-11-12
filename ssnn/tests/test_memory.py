@@ -36,6 +36,23 @@ class MemoryTaskTest(unittest.TestCase):
             self.assertEqual(label, int(inputs[writes[-1], 2 * register + 1]))  # SET(i, 1) or SET(i, 0)
             self.assertEqual(len(inputs) - 1 - writes[-1], distance)
 
+    def test_registers_of_several_values(self):
+        task = MemoryTask(registers=3, noise=2, rewrite_rate=0.3, values=4)
+        rng = np.random.default_rng(3)
+        self.assertEqual(task.input_dim, 4 * 3 + 3 + 1 + 2)
+
+        for _ in range(100):
+            inputs, label, distance = task.sequence(rng, int(rng.integers(1, 20)))
+            register = int(inputs[-1, 12:15].argmax())  # the QUERY, after the 12 SET inputs
+            writes = [t for t in range(len(inputs)) if inputs[t, 4 * register:4 * register + 4].any()]
+            self.assertEqual(label, int(inputs[writes[-1], 4 * register:4 * register + 4].argmax()))
+            self.assertEqual(len(inputs) - 1 - writes[-1], distance)
+
+        routes = task.oracle_routes()
+        for register in range(3):
+            for value in range(4):
+                self.assertEqual(routes[int(task.set_event(register, value).argmax())], [register])
+
     def test_noise_only_on_the_noops(self):
         task = MemoryTask(registers=2, noise=4)
         inputs, _, _ = task.sequence(np.random.default_rng(1), 20)
