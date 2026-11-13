@@ -70,12 +70,18 @@ def experiment_capacity(seed, num_regimes, per_regime=(400, 100, 100)):
 
 
 # Experiment B: memory. A set of hidden registers, each holding one of `values` values (2 by default: one bit). A
-# sequence first writes every register, then the register it will ask for once more, then has a gap of NOOP events,
-# with a rewrite of another register now and then, and ends with a QUERY of that register, whose answer is the last
-# value written to it. The NOOPs carry noise features that don't matter, which a dense recurrent network still has to
-# keep out of its state. The distance is the number of events from the last write of the queried register to the
-# QUERY. The answer is one of the values: a class. With 1 register of one bit and no noise, it is a single bit to
-# remember.
+# sequence first writes every register, then has a preamble of 0 to `preamble` events (30 by default) like those of
+# a gap, then writes the register it will ask for with a new value, then has a gap of NOOP events, with a rewrite of
+# another register now and then, and ends with a QUERY of that register, whose answer is the last value written to
+# it. The NOOPs carry noise features that don't matter, which a dense recurrent network still has to keep out of its
+# state. The distance is the number of events from the last write of the queried register to the QUERY. The answer
+# is one of the values: a class. With 1 register of one bit and no noise, it is a single bit to remember.
+#
+# The preamble makes the position of that last write random, and the preamble's rewrites (of any register) and the
+# new value make a register replace the value it held, so nothing but the QUERY tells which value to answer: a model
+# has to keep the last value of every register. In the first version of the task (preamble=0, new_value=False), that
+# write always came right after the first writes and repeated the value of the first one, so keeping the value
+# written at that position was enough, and a value was never replaced.
 #
 # The inputs, with encoding:
 #   "one-hot"   one-hot over the commands, then the noise features (non-zero only on the NOOPs): [SET(0, 0),
@@ -84,11 +90,14 @@ def experiment_capacity(seed, num_regimes, per_regime=(400, 100, 100)):
 #   "keyed"     the register is a feature of its own, shared by its writes and its QUERY like the key of a memory, and
 #               the value and the operation are others: [register, value, SET, QUERY, NOOP, noise]
 class MemoryTask:
-    def __init__(self, registers=8, noise=8, rewrite_rate=0.1, values=2, encoding="one-hot"):
+    def __init__(self, registers=8, noise=8, rewrite_rate=0.1, values=2, encoding="one-hot", preamble=30,
+                 new_value=True):
         if encoding not in ("one-hot", "keyed"):
             raise ValueError("encoding must be one-hot or keyed")
+        if preamble < 0:
+            raise ValueError("the preamble can't be negative")
         self.registers, self.noise, self.rewrite_rate, self.values = registers, noise, rewrite_rate, values
-        self.encoding = encoding
+        self.encoding, self.preamble, self.new_value = encoding, preamble, new_value
         commands = registers + values + 2 if encoding == "keyed" else (values + 1) * registers
         self.input_dim = commands + 1 + noise
         self.noop_index = commands
@@ -115,21 +124,26 @@ class MemoryTask:
         x[self.noop_index + 1:] = rng.normal(0, 1, self.noise)
         return x
 
+    # An event of a preamble or a gap: at the rewrite rate, a new value for one of the given registers, else a NOOP
+    def gap_event(self, rng, values, registers):
+        if registers and rng.random() < self.rewrite_rate:
+            register = int(rng.choice(registers))
+            values[register] = rng.integers(0, self.values)
+            return self.set_event(register, values[register])
+        return self.noop_event(rng)
+
     def sequence(self, rng, distance):
         values = rng.integers(0, self.values, self.registers)
         events = [self.set_event(i, values[i]) for i in rng.permutation(self.registers)]
+        if self.preamble:
+            every = list(range(self.registers))
+            events += [self.gap_event(rng, values, every) for _ in range(rng.integers(0, self.preamble + 1))]
         target = int(rng.integers(0, self.registers))
+        if self.new_value:
+            values[target] = rng.integers(0, self.values)
         events.append(self.set_event(target, values[target]))  # its last write, distance events before the QUERY
         others = [i for i in range(self.registers) if i != target]
-
-        for _ in range(distance - 1):
-            if others and rng.random() < self.rewrite_rate:
-                other = int(rng.choice(others))
-                values[other] = rng.integers(0, self.values)
-                events.append(self.set_event(other, values[other]))
-            else:
-                events.append(self.noop_event(rng))
-
+        events += [self.gap_event(rng, values, others) for _ in range(distance - 1)]
         events.append(self.query_event(target))
         return np.array(events), int(values[target]), distance
 

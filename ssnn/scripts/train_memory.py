@@ -15,10 +15,11 @@ from ssnn.tasks import MemoryTask, experiment_memory
 from ssnn.training import evaluate_sequences, train_sequences
 
 
-# Experiment B: memory. Registers of one of 2 values (or --values), a long gap of noisy NOOPs with rewrites of other
-# registers, and a QUERY of one register at the end (ssnn/tasks.py), each write and QUERY a feature of its own or, with
-# --encoding keyed, the register a feature shared by its writes and its QUERY. Trained with distances up to 30 (or
-# --max-distance), tested up to 500. For each seed:
+# Experiment B: memory. Registers of one of 2 values (or --values), a preamble of random length, a new value for the
+# register to ask for, a long gap of noisy NOOPs with rewrites of other registers, and a QUERY of that register at the
+# end (ssnn/tasks.py), each write and QUERY a feature of its own or, with --encoding keyed, the register a feature
+# shared by its writes and its QUERY; --preamble 0 --same-value gives the first version of the task. Trained with
+# distances up to 30 (or --max-distance), tested up to 500. For each seed:
 #   ssnn, oracle        one expert per register and one for the NOOPs, chosen by hand: what the architecture can do
 #                       when the routing is right
 #   ssnn, learned       16 experts (or --experts), 2 per event, the router learns which
@@ -43,6 +44,10 @@ parser.add_argument("--values", type=positive_int, default=2, help="values a reg
 parser.add_argument("--noise", type=int, default=8, help="noise features on the NOOPs (default: 8)")
 parser.add_argument("--encoding", choices=("one-hot", "keyed"), default="one-hot",
                     help="one input feature per write and QUERY, or the register as a feature of its own (default: one-hot)")
+parser.add_argument("--preamble", type=int, default=30,
+                    help="largest number of events before the last write of the queried register (default: 30)")
+parser.add_argument("--same-value", action="store_true",
+                    help="that last write repeats the value the register holds (the first version of the task)")
 parser.add_argument("--experts", type=positive_int, default=16, help="experts of the learned SSNNs (default: 16)")
 parser.add_argument("--seeds", type=int, nargs="+", default=[7, 19, 43], help="seeds of the data and models (default: 7 19 43)")
 parser.add_argument("--epochs", type=positive_int, default=20, help="epochs of every model (default: 20)")
@@ -56,7 +61,8 @@ parser.add_argument("--report", default=os.path.join(REPORTS, "memory.csv"), hel
 args = parser.parse_args()
 
 STATE_DIM, NUM_CLASSES = 32, args.values
-task = MemoryTask(registers=args.registers, noise=args.noise, values=args.values, encoding=args.encoding)
+task = MemoryTask(registers=args.registers, noise=args.noise, values=args.values, encoding=args.encoding,
+                  preamble=args.preamble, new_value=not args.same_value)
 env = environment()
 ENVIRONMENT = {"commit": env["commit"], "numpy": env["numpy"], "python": env["python"], "machine": env["machine"],
                "blas_threads": env["blas_threads_env"]}
@@ -90,8 +96,9 @@ def models(seed):
 
 
 results = []
-print(f"{args.registers} registers of {args.values} values ({args.encoding}), {args.noise} noise features, distances "
-      f"up to {args.max_distance} to train")
+print(f"{args.registers} registers of {args.values} values ({args.encoding}), {args.noise} noise features, a "
+      f"preamble of up to {args.preamble} events, {'the same' if args.same_value else 'a new'} value at the last "
+      f"write, distances up to {args.max_distance} to train")
 
 for seed in args.seeds:
     train, val, tests = experiment_memory(seed, task, max_distance=args.max_distance)
@@ -123,7 +130,9 @@ for seed in args.seeds:
                                                    f"mean write {leak['write']:.3f}" if leak["touched"] != "" else ""))
             append_row(args.report, {
                 "date": datetime.now().isoformat(timespec="seconds"), "experiment": "B", "registers": args.registers,
-                "values": args.values, "encoding": args.encoding, "noise": args.noise, "seed": seed, "config": config_hash(config) if config else "",
+                "values": args.values, "encoding": args.encoding, "preamble": args.preamble,
+                "new_value": not args.same_value, "noise": args.noise, "seed": seed,
+                "config": config_hash(config) if config else "",
                 "model": name, "touched_per_event": model.touched, "epochs": args.epochs, "learning_rate": learning_rate,
                 "max_distance": args.max_distance, "gru_update_bias": args.gru_update_bias if is_gru else "",
                 "best_epoch": history["best_epoch"], "val_loss": min(history["val_loss"]),

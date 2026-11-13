@@ -81,6 +81,36 @@ class MemoryTaskTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MemoryTask(encoding="binary")
 
+    def test_only_the_query_tells_which_value_to_answer(self):
+        # Over sequences of 8 registers of one bit: how many positions the last write of the queried register takes,
+        # how often it replaces another value, and how often a rule that ignores the QUERY (the value of the last write
+        # before the first NOOP) is right
+        def measure(task):
+            rng = np.random.default_rng(8)
+            positions, replaced, rule = set(), [], []
+            for _ in range(500):
+                inputs, label, distance = task.sequence(rng, int(rng.integers(1, 101)))
+                register, last = int(inputs[-1].argmax()) - 16, len(inputs) - 1 - distance
+                positions.add(last)
+                replaced.append(any(inputs[t, 2 * register + 1 - label] == 1 for t in range(last)))
+                noops = np.flatnonzero(inputs[:, task.noop_index])
+                written = [int(x.argmax()) % 2 for x in inputs[:noops[0] if len(noops) else -1] if x.argmax() < 16]
+                rule.append(written[-1] == label)
+            return len(positions), np.mean(replaced), np.mean(rule)
+
+        positions, replaced, rule = measure(MemoryTask(registers=8))
+        self.assertGreater(positions, 25)
+        self.assertGreater(replaced, 0.4)
+        self.assertLess(rule, 0.6)  # a guess is right half the time
+
+        # The first version: the last write always right after the first writes, repeating the value of the first one
+        positions, replaced, rule = measure(MemoryTask(registers=8, preamble=0, new_value=False))
+        self.assertEqual((positions, replaced), (1, 0.0))
+        self.assertGreater(rule, 0.85)
+
+        with self.assertRaises(ValueError):
+            MemoryTask(preamble=-1)
+
     def test_noise_only_on_the_noops(self):
         task = MemoryTask(registers=2, noise=4)
         inputs, _, _ = task.sequence(np.random.default_rng(1), 20)
